@@ -1,12 +1,11 @@
 'use strict';
 
 const crypto = require('crypto');
-const { v4: uuidv4 } = require('uuid');
+const jwt = require('jsonwebtoken');
 const { SH } = require('./config');
 
-// In-memory session store: token → { username, role, name, expires }
-const _sessions = new Map();
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
+const SESSION_TTL = '8h'; // 8 hours
+const JWT_SECRET = process.env.SESSION_SECRET || 'change-me-in-production';
 
 const ROLE_LABELS = {
   supervisor: 'Supervisor',
@@ -17,33 +16,27 @@ const ROLE_LABELS = {
   meeting:    'Meeting View',
 };
 
-// Clean up expired sessions
-function _cleanSessions() {
-  const now = Date.now();
-  for (const [token, sess] of _sessions.entries()) {
-    if (sess.expires < now) _sessions.delete(token);
-  }
-}
-
-// Run cleanup every hour
-setInterval(_cleanSessions, 60 * 60 * 1000);
-
 function _hashPassword(password) {
   return crypto.createHash('sha256').update(String(password)).digest('hex');
 }
 
 /**
- * Validate session token. Returns session object or null.
+ * Validate session token (a signed JWT). Returns session object or null.
+ * Stateless — works across separate serverless invocations.
  */
 function validateSession(token) {
   if (!token) return null;
-  const sess = _sessions.get(token);
-  if (!sess) return null;
-  if (sess.expires < Date.now()) {
-    _sessions.delete(token);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    return {
+      username: payload.username,
+      role:     payload.role,
+      name:     payload.name,
+      email:    payload.email,
+    };
+  } catch (err) {
     return null;
   }
-  return sess;
 }
 
 /**
@@ -87,7 +80,6 @@ async function _findUser(username, sheets) {
  * loginUser({ username, password }, sheets) → { success, token, role, name, roleLabel } | { error }
  */
 async function loginUser(payload, sheets) {
-  _cleanSessions();
   const { username, password } = payload;
   if (!username || !password) return { error: 'Username and password required.' };
 
@@ -107,15 +99,11 @@ async function loginUser(payload, sheets) {
   const hash = _hashPassword(password);
   if (hash !== user.passwordHash) return { error: 'Invalid username or password.' };
 
-  const token = uuidv4();
-  const sess = {
-    username: user.username,
-    role:     user.role,
-    name:     user.name,
-    email:    user.email,
-    expires:  Date.now() + SESSION_TTL_MS,
-  };
-  _sessions.set(token, sess);
+  const token = jwt.sign(
+    { username: user.username, role: user.role, name: user.name, email: user.email },
+    JWT_SECRET,
+    { expiresIn: SESSION_TTL }
+  );
 
   return {
     success:   true,
@@ -128,10 +116,9 @@ async function loginUser(payload, sheets) {
 
 /**
  * logoutUser({ token }) → { success }
+ * With stateless JWTs, logout is a client-side no-op (client discards the token).
  */
 function logoutUser(payload) {
-  const { token } = payload;
-  if (token) _sessions.delete(token);
   return { success: true };
 }
 
