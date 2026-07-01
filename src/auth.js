@@ -20,6 +20,32 @@ function _hashPassword(password) {
   return crypto.createHash('sha256').update(String(password)).digest('hex');
 }
 
+// Normalize a header to lowercase alphanumeric-only, so headers like
+// "PasswordHash (SHA-256)" or "Full Name" still match their field aliases.
+function _normalize(s) {
+  return String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+}
+
+function _findHeaderIdx(headers, aliases) {
+  const normalized = headers.map(_normalize);
+  for (const alias of aliases) {
+    const i = normalized.findIndex(h => h === alias || h.startsWith(alias));
+    if (i !== -1) return i;
+  }
+  return -1;
+}
+
+function _userHeaderIdx(headers) {
+  return {
+    uIdx:     _findHeaderIdx(headers, ['username']),
+    phIdx:    _findHeaderIdx(headers, ['passwordhash', 'password']),
+    roleIdx:  _findHeaderIdx(headers, ['role']),
+    nameIdx:  _findHeaderIdx(headers, ['fullname', 'name']),
+    emailIdx: _findHeaderIdx(headers, ['email']),
+    actIdx:   _findHeaderIdx(headers, ['active']),
+  };
+}
+
 /**
  * Validate session token (a signed JWT). Returns session object or null.
  * Stateless — works across separate serverless invocations.
@@ -47,13 +73,7 @@ function validateSession(token) {
 async function _findUser(username, sheets) {
   const rows = await sheets.getSheet(SH.USERS);
   const headers = await sheets.getSheetHeaders(SH.USERS);
-  const idx = (h) => headers.findIndex(x => String(x).trim().toLowerCase() === h.toLowerCase());
-  const uIdx    = idx('username');
-  const phIdx   = idx('passwordhash');
-  const roleIdx = idx('role');
-  const nameIdx = idx('name');
-  const emailIdx= idx('email');
-  const actIdx  = idx('active');
+  const { uIdx, phIdx, roleIdx, nameIdx, emailIdx, actIdx } = _userHeaderIdx(headers);
 
   const { DB_START } = require('./config');
   for (let i = 0; i < rows.length; i++) {
@@ -132,12 +152,7 @@ async function getAllUsers(token, sheets) {
 
   const rows = await sheets.getSheet(SH.USERS);
   const headers = await sheets.getSheetHeaders(SH.USERS);
-  const idx = (h) => headers.findIndex(x => String(x).trim().toLowerCase() === h.toLowerCase());
-  const uIdx    = idx('username');
-  const roleIdx = idx('role');
-  const nameIdx = idx('name');
-  const emailIdx= idx('email');
-  const actIdx  = idx('active');
+  const { uIdx, roleIdx, nameIdx, emailIdx, actIdx } = _userHeaderIdx(headers);
   const { DB_START } = require('./config');
 
   return rows.map((row, i) => ({
@@ -195,7 +210,7 @@ async function changePassword(payload, token, sheets) {
 
   const newHash = _hashPassword(newPassword);
   const headers = user.headers;
-  const phIdx = headers.findIndex(x => String(x).trim().toLowerCase() === 'passwordhash');
+  const phIdx = _findHeaderIdx(headers, ['passwordhash', 'password']);
   if (phIdx < 0) return { error: 'Cannot find password column.' };
 
   const newRow = [...(user.rowArray || [])];
