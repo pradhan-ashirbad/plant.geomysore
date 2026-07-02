@@ -83,7 +83,7 @@
           <span style="font-size:11px;color:var(--txt3)">to</span>
           <input type="date" id="dash-to" class="filter-input">
         </span>
-        <button onclick="loadDashboard()" class="btn-apply">Apply</button>
+        <button onclick="loadDashboard(true)" class="btn-apply">Apply</button>
         <span id="dash-info" style="font-size:11px;color:var(--txt3)"></span>
       </div>
       <div id="dash-kpis" class="kpi-strip"></div>
@@ -118,7 +118,7 @@
           <label id="det-overlay-wrap" style="display:none;align-items:center;gap:4px;font-size:11px;color:var(--txt2);white-space:nowrap">
             <input type="checkbox" id="det-overlay" onchange="toggleMonthOverlay()"> vs last month
           </label>
-          <button onclick="loadDetail()" class="btn-apply">Go</button>
+          <button onclick="loadDetail(true)" class="btn-apply">Go</button>
           <button onclick="exportSection()" class="btn-export" title="Download as Excel">⬇ Excel</button>
         </div>
       </div>

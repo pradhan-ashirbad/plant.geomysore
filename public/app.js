@@ -11,7 +11,7 @@ const STATE = {
   filterMode: 'date', filterDate: null, filterMonth: null,
   detailMode: 'date', currentSec: null, currentSubSec: null,
   sectionGroups: {}, groupTabLabels: {}, subSecLabels: {},
-  charts: {},
+  charts: {}, cache: new Map(),
   adminPanel: 'users',
 };
 
@@ -40,6 +40,46 @@ async function api(endpoint, payload = {}) {
     showToast('Network error — check connection', 'error');
     return null;
   }
+}
+
+// ─── CLIENT-SIDE READ CACHE ─────────────────────────────────────────────────────
+// Short-lived cache so flipping between dashboard cards / sections re-renders
+// instantly instead of re-fetching + showing skeletons every time. Any write
+// action (submit entry, save target/limit, import, etc.) clears it so users
+// never see stale data after making a change.
+const CACHE_TTL_MS = 45000;
+
+function cacheKey(endpoint, payload) {
+  const { token, ...rest } = payload || {};
+  return endpoint + '::' + JSON.stringify(rest);
+}
+
+function cacheGet(key) {
+  const hit = STATE.cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.ts > CACHE_TTL_MS) { STATE.cache.delete(key); return null; }
+  return hit.data;
+}
+
+function cacheSet(key, data) {
+  STATE.cache.set(key, { data, ts: Date.now() });
+}
+
+function cacheClear() {
+  STATE.cache.clear();
+}
+
+/**
+ * Cache-aware wrapper around api(): returns a cached response instantly if
+ * fresh, otherwise fetches, caches, and returns the result.
+ */
+async function apiCached(endpoint, payload = {}) {
+  const key = cacheKey(endpoint, payload);
+  const cached = cacheGet(key);
+  if (cached) return cached;
+  const data = await api(endpoint, payload);
+  if (data && !data.error) cacheSet(key, data);
+  return data;
 }
 
 // ─── TOAST ────────────────────────────────────────────────────────────────────
@@ -163,6 +203,7 @@ async function doLogin() {
 function doLogout() {
   if (STATE.token) api('logout', {});
   STATE.token = null; STATE.role = null;
+  cacheClear(); // don't leak one user's data into the next login on this tab
   // Destroy all charts
   Object.values(STATE.charts).forEach(c => { try { c && c.destroy && c.destroy(); } catch (e) {} });
   STATE.charts = {};
@@ -338,15 +379,29 @@ function renderKpiStrip(kpis) {
   }).join('');
 }
 
-async function loadDashboard() {
+async function loadDashboard(force) {
+  const payload = dashFilterPayload();
+  const key = cacheKey('dashboard', payload);
+  const cached = !force && cacheGet(key);
+
+  if (cached) {
+    renderDashboard(cached);
+    return;
+  }
+
   const grid = document.getElementById('dash-grid');
   grid.innerHTML = skeletonCards(6);
   document.getElementById('dash-kpis').innerHTML =
     '<div class="kpi-s-tile"><div class="skel-line" style="width:60%"></div><div class="skel-line" style="width:80%;height:9px"></div></div>'.repeat(4);
 
-  const data = await api('dashboard', dashFilterPayload());
+  const data = await api('dashboard', payload);
   if (!data) return;
+  cacheSet(key, data);
+  renderDashboard(data);
+}
 
+function renderDashboard(data) {
+  const grid = document.getElementById('dash-grid');
   document.getElementById('dash-info').textContent = data.date ? 'Showing: ' + data.date : '';
   renderKpiStrip(data.kpis);
   STATE.sectionGroups = data.groups || {};
@@ -471,24 +526,37 @@ function detFilterPayload() {
   return { date: document.getElementById('det-date').value };
 }
 
-async function loadDetail() {
+async function loadDetail(force) {
+  const activeKey = STATE.currentSubSec || STATE.currentSec;
+  const payload = { section: activeKey, ...detFilterPayload() };
+  const key = cacheKey('section', payload);
+  const cached = !force && cacheGet(key);
+
+  if (cached) {
+    renderDetailData(activeKey, cached);
+    return;
+  }
+
   const content = document.getElementById('det-content');
   content.innerHTML = `
     <div class="skel-card" style="height:90px"><div class="skel-line" style="width:40%"></div><div class="skel-line" style="width:65%"></div></div>
     <div class="skel-card" style="height:220px;margin-top:14px"><div class="skel-line" style="width:30%"></div><div class="skel-line" style="width:90%;height:140px"></div></div>`;
-
-  // Destroy old charts
-  Object.values(STATE.charts).forEach(c => { try { c && c.destroy && c.destroy(); } catch (e) {} });
-  STATE.charts = {};
-
-  const activeKey = STATE.currentSubSec || STATE.currentSec;
-  const payload = { section: activeKey, ...detFilterPayload() };
 
   const data = await api('section', payload);
   if (!data || data.error) {
     content.innerHTML = `${subTabsHtml()}<div class="nodata">${data ? data.error : 'Error loading data'}</div>`;
     return;
   }
+  cacheSet(key, data);
+  renderDetailData(activeKey, data);
+}
+
+function renderDetailData(activeKey, data) {
+  const content = document.getElementById('det-content');
+
+  // Destroy old charts
+  Object.values(STATE.charts).forEach(c => { try { c && c.destroy && c.destroy(); } catch (e) {} });
+  STATE.charts = {};
 
   // Remember this sub-tab's real label so the tab bar can show it even
   // before its data has ever been fetched in this session.
@@ -1490,6 +1558,7 @@ async function submitEntry() {
 
   const msg = document.getElementById('ent-msg');
   if (result && result.success) {
+    cacheClear();
     msg.className = 'form-msg success'; msg.style.display = 'block';
     msg.textContent = `Saved successfully to ${sheet}`;
     showToast('Entry saved successfully');
@@ -1649,6 +1718,7 @@ async function saveTarget() {
 
   const result = await api('targets/save', payload);
   if (result && result.success) {
+    cacheClear(); // target lines on section charts must reflect the new value
     closeModal('target'); showToast('Target saved'); loadTargets();
   } else {
     fail(result ? result.error : 'Save failed');
@@ -1850,6 +1920,7 @@ async function doImport() {
       msg.style.display = 'block';
       return;
     }
+    cacheClear();
     msg.textContent = `Imported ${data.rowsInserted} rows (matched ${data.matchedColumns}/${data.totalColumns} columns).`;
     msg.className = 'form-msg success';
     msg.style.display = 'block';
@@ -2018,6 +2089,7 @@ async function saveLimitRow(limitId) {
 
   const result = await api('limits/upsert', { limitId, min, max, warnMin, warnMax });
   if (result && result.success) {
+    cacheClear(); // dashboard/section status colors depend on limits
     showToast('Limit updated');
     const rec = _limitsData.find(x => x.limitId === limitId);
     if (rec) Object.assign(rec, { min, max, warnMin, warnMax, exists: true });
