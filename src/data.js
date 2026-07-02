@@ -2,7 +2,7 @@
 
 const {
   DB_START, SH, LT_TANKS, DT_TANKS, CARBON_TANKS,
-  SECTIONS, SHEET_PARAMS, SECTION_CHEMICALS,
+  SECTIONS, SHEET_PARAMS, SECTION_CHEMICALS, ROLE_CONFIG,
   canWrite, canSeeSection, canManageTargets,
 } = require('./config');
 const { validateSession } = require('./auth');
@@ -621,7 +621,7 @@ async function getChemicalInventory(token, sheets) {
 async function updateChemInventory(payload, token, sheets) {
   const sess = validateSession(token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
-  if (!sess.role === 'supervisor' && !ROLE_CONFIG?.[sess.role]?.canChemAdmin) {
+  if (sess.role !== 'supervisor' && !ROLE_CONFIG[sess.role]?.canChemAdmin) {
     return { error: 'Access denied.' };
   }
 

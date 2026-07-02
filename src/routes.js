@@ -2,7 +2,7 @@
 
 const express = require('express');
 const router  = express.Router();
-const sheets  = require('./sheets');
+const sheets  = require('./db');
 const auth    = require('./auth');
 const data    = require('./data');
 
@@ -20,7 +20,7 @@ function handle(fn) {
 
 // ─── AUTH ROUTES ──────────────────────────────────────────────────────────────
 
-router.post('/login', handle((body) => auth.loginUser(body, sheets)));
+router.post('/login', handle((body) => auth.loginUser(body)));
 
 router.post('/logout', (req, res) => {
   res.json(auth.logoutUser(req.body));
@@ -51,8 +51,8 @@ router.post('/chem-inventory/update', handle((body) => data.updateChemInventory(
 
 // ─── USER ADMIN ───────────────────────────────────────────────────────────────
 
-router.post('/users',           handle((body) => auth.getAllUsers(body.token, sheets)));
-router.post('/users/save',      handle((body) => auth.saveUser(body, body.token, sheets)));
-router.post('/change-password', handle((body) => auth.changePassword(body, body.token, sheets)));
+router.post('/users',           handle((body) => auth.getAllUsers(body.token)));
+router.post('/users/save',      handle((body) => auth.saveUser(body, body.token)));
+router.post('/change-password', handle((body) => auth.changePassword(body, body.token)));
 
 module.exports = router;

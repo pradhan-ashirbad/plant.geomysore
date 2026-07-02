@@ -2,7 +2,7 @@
 
 const crypto = require('crypto');
 const jwt = require('jsonwebtoken');
-const { SH } = require('./config');
+const db = require('./db');
 
 const SESSION_TTL = '8h'; // 8 hours
 const JWT_SECRET = process.env.SESSION_SECRET || 'change-me-in-production';
@@ -18,32 +18,6 @@ const ROLE_LABELS = {
 
 function _hashPassword(password) {
   return crypto.createHash('sha256').update(String(password)).digest('hex');
-}
-
-// Normalize a header to lowercase alphanumeric-only, so headers like
-// "PasswordHash (SHA-256)" or "Full Name" still match their field aliases.
-function _normalize(s) {
-  return String(s || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-}
-
-function _findHeaderIdx(headers, aliases) {
-  const normalized = headers.map(_normalize);
-  for (const alias of aliases) {
-    const i = normalized.findIndex(h => h === alias || h.startsWith(alias));
-    if (i !== -1) return i;
-  }
-  return -1;
-}
-
-function _userHeaderIdx(headers) {
-  return {
-    uIdx:     _findHeaderIdx(headers, ['username']),
-    phIdx:    _findHeaderIdx(headers, ['passwordhash', 'password']),
-    roleIdx:  _findHeaderIdx(headers, ['role']),
-    nameIdx:  _findHeaderIdx(headers, ['fullname', 'name']),
-    emailIdx: _findHeaderIdx(headers, ['email']),
-    actIdx:   _findHeaderIdx(headers, ['active']),
-  };
 }
 
 /**
@@ -65,59 +39,34 @@ function validateSession(token) {
   }
 }
 
-/**
- * Find a user row in the USERS sheet.
- * Sheet columns (row 4 headers): Username | PasswordHash | Role | Name | Email | Active
- * Returns { username, passwordHash, role, name, email, active, rowNum }
- */
-async function _findUser(username, sheets) {
-  const rows = await sheets.getSheet(SH.USERS);
-  const headers = await sheets.getSheetHeaders(SH.USERS);
-  const { uIdx, phIdx, roleIdx, nameIdx, emailIdx, actIdx } = _userHeaderIdx(headers);
-
-  const { DB_START } = require('./config');
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i];
-    const u = uIdx >= 0 ? String(row[uIdx] || '').trim().toLowerCase() : '';
-    if (u === username.trim().toLowerCase()) {
-      return {
-        username:     String(row[uIdx] || '').trim(),
-        passwordHash: String(row[phIdx] || '').trim(),
-        role:         String(row[roleIdx] || '').trim(),
-        name:         String(row[nameIdx] || '').trim(),
-        email:        String(row[emailIdx] || '').trim(),
-        active:       String(row[actIdx] || '').trim().toLowerCase(),
-        rowNum:       DB_START + i,
-        rowArray:     row,
-        headers,
-      };
-    }
-  }
-  return null;
+async function _findUser(username) {
+  const res = await db.query(
+    'SELECT id, username, password_hash, role, name, email, active FROM users WHERE lower(username) = lower($1)',
+    [username]
+  );
+  return res.rows[0] || null;
 }
 
 /**
- * loginUser({ username, password }, sheets) → { success, token, role, name, roleLabel } | { error }
+ * loginUser({ username, password }) → { success, token, role, name, roleLabel } | { error }
  */
-async function loginUser(payload, sheets) {
+async function loginUser(payload) {
   const { username, password } = payload;
   if (!username || !password) return { error: 'Username and password required.' };
 
   let user;
   try {
-    user = await _findUser(username, sheets);
+    user = await _findUser(username);
   } catch (err) {
     console.error('loginUser error:', err.message);
     return { error: 'Could not reach database. Check server configuration.' };
   }
 
   if (!user) return { error: 'Invalid username or password.' };
-  if (user.active === 'false' || user.active === '0' || user.active === 'no') {
-    return { error: 'Account is disabled. Contact administrator.' };
-  }
+  if (user.active === false) return { error: 'Account is disabled. Contact administrator.' };
 
   const hash = _hashPassword(password);
-  if (hash !== user.passwordHash) return { error: 'Invalid username or password.' };
+  if (hash !== user.password_hash) return { error: 'Invalid username or password.' };
 
   const token = jwt.sign(
     { username: user.username, role: user.role, name: user.name, email: user.email },
@@ -143,34 +92,30 @@ function logoutUser(payload) {
 }
 
 /**
- * getAllUsers(token, sheets) → array of user objects
+ * getAllUsers(token) → array of user objects
  */
-async function getAllUsers(token, sheets) {
+async function getAllUsers(token) {
   const sess = validateSession(token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
   if (sess.role !== 'supervisor') return { error: 'Access denied.' };
 
-  const rows = await sheets.getSheet(SH.USERS);
-  const headers = await sheets.getSheetHeaders(SH.USERS);
-  const { uIdx, roleIdx, nameIdx, emailIdx, actIdx } = _userHeaderIdx(headers);
-  const { DB_START } = require('./config');
-
-  return rows.map((row, i) => ({
-    username: String(row[uIdx] || '').trim(),
-    role:     String(row[roleIdx] || '').trim(),
-    name:     String(row[nameIdx] || '').trim(),
-    email:    String(row[emailIdx] || '').trim(),
-    active:   String(row[actIdx] || '').trim(),
-    rowNum:   DB_START + i,
-  })).filter(u => u.username);
+  const res = await db.query('SELECT id, username, role, name, email, active FROM users ORDER BY id ASC');
+  return res.rows.map(u => ({
+    username: u.username,
+    role:     u.role,
+    name:     u.name || '',
+    email:    u.email || '',
+    active:   String(u.active),
+    rowNum:   u.id,
+  }));
 }
 
 /**
- * saveUser(payload, token, sheets) → { success } | { error }
+ * saveUser(payload, token) → { success } | { error }
  * payload: { username, role, name, email, password?, active }
- * If username matches existing user, update that row. Otherwise append new.
+ * If username matches existing user, update that row. Otherwise insert new.
  */
-async function saveUser(payload, token, sheets) {
+async function saveUser(payload, token) {
   const sess = validateSession(token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
   if (sess.role !== 'supervisor') return { error: 'Access denied.' };
@@ -178,23 +123,29 @@ async function saveUser(payload, token, sheets) {
   const { username, role, name, email, password, active } = payload;
   if (!username || !role) return { error: 'Username and role are required.' };
 
-  const existing = await _findUser(username, sheets);
-  const passwordHash = password ? _hashPassword(password) : (existing ? existing.passwordHash : _hashPassword('changeme'));
-  const rowArray = [username, passwordHash, role, name || '', email || '', active !== undefined ? String(active) : 'true'];
+  const existing = await _findUser(username);
+  const passwordHash = password ? _hashPassword(password) : (existing ? existing.password_hash : _hashPassword('changeme'));
+  const isActive = active !== undefined ? !!active && active !== 'false' : true;
 
   if (existing) {
-    await sheets.updateRow(SH.USERS, existing.rowNum, rowArray);
+    await db.query(
+      'UPDATE users SET password_hash=$1, role=$2, name=$3, email=$4, active=$5 WHERE id=$6',
+      [passwordHash, role, name || '', email || '', isActive, existing.id]
+    );
   } else {
-    await sheets.appendRow(SH.USERS, rowArray);
+    await db.query(
+      'INSERT INTO users (username, password_hash, role, name, email, active) VALUES ($1,$2,$3,$4,$5,$6)',
+      [username, passwordHash, role, name || '', email || '', isActive]
+    );
   }
   return { success: true };
 }
 
 /**
- * changePassword(payload, token, sheets) → { success } | { error }
+ * changePassword(payload, token) → { success } | { error }
  * payload: { currentPassword, newPassword }
  */
-async function changePassword(payload, token, sheets) {
+async function changePassword(payload, token) {
   const sess = validateSession(token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
 
@@ -202,22 +153,14 @@ async function changePassword(payload, token, sheets) {
   if (!currentPassword || !newPassword) return { error: 'Both current and new password required.' };
   if (newPassword.length < 6) return { error: 'New password must be at least 6 characters.' };
 
-  const user = await _findUser(sess.username, sheets);
+  const user = await _findUser(sess.username);
   if (!user) return { error: 'User not found.' };
 
   const currentHash = _hashPassword(currentPassword);
-  if (currentHash !== user.passwordHash) return { error: 'Current password is incorrect.' };
+  if (currentHash !== user.password_hash) return { error: 'Current password is incorrect.' };
 
   const newHash = _hashPassword(newPassword);
-  const headers = user.headers;
-  const phIdx = _findHeaderIdx(headers, ['passwordhash', 'password']);
-  if (phIdx < 0) return { error: 'Cannot find password column.' };
-
-  const newRow = [...(user.rowArray || [])];
-  // Pad if needed
-  while (newRow.length <= phIdx) newRow.push('');
-  newRow[phIdx] = newHash;
-  await sheets.updateRow(SH.USERS, user.rowNum, newRow);
+  await db.query('UPDATE users SET password_hash=$1 WHERE id=$2', [newHash, user.id]);
 
   return { success: true };
 }
