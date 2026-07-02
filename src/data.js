@@ -3,6 +3,7 @@
 const {
   DB_START, SH, LT_TANKS, DT_TANKS, CARBON_TANKS,
   SECTIONS, SHEET_PARAMS, SECTION_CHEMICALS, ROLE_CONFIG,
+  SECTION_GROUPS, HIDDEN_FROM_DASHBOARD, GROUP_TAB_LABELS,
   canWrite, canSeeSection, canManageTargets,
 } = require('./config');
 const { validateSession } = require('./auth');
@@ -370,39 +371,53 @@ async function getIndexData(payload, sheets) {
   const filter = _filterFromPayload(payload);
   const limitsMap = await getLimitsMap(sheets).catch(() => ({}));
 
-  const visible = Object.entries(SECTIONS).filter(([key]) => canSeeSection(sess.role, key));
+  // Only top-level (non-grouped-child) sections get their own dashboard card;
+  // grouped children (cyclone, thickener, slurry, carbon, screen) are folded
+  // into their parent's card and reachable via sub-tabs on its detail page.
+  const visible = Object.entries(SECTIONS).filter(
+    ([key]) => !HIDDEN_FROM_DASHBOARD.has(key) && canSeeSection(sess.role, key)
+  );
 
   // All sections load in parallel — one slow sheet no longer serializes the rest.
   const results = await Promise.all(visible.map(async ([key, secCfg]) => {
+    const memberKeys = SECTION_GROUPS[key] || [key];
     try {
-      const params = SHEET_PARAMS[secCfg.sheet] || [];
-      const numParams = params.filter(p => !p.isText && !p.isTime && !p.isSelect && !p.autoCalc);
-      const rows = await _buildSectionRows(secCfg.sheet, params, filter, limitsMap, sheets);
+      const memberResults = await Promise.all(memberKeys.map(async (mKey) => {
+        const mCfg = SECTIONS[mKey];
+        const params = SHEET_PARAMS[mCfg.sheet] || [];
+        const numParams = params.filter(p => !p.isText && !p.isTime && !p.isSelect && !p.autoCalc);
+        const rows = await _buildSectionRows(mCfg.sheet, params, filter, limitsMap, sheets);
 
-      const allStatuses = [];
-      const flagged = [];
-      rows.forEach(row => {
-        numParams.forEach(p => {
-          const s = row[p.key + '__status'];
-          if (s) allStatuses.push(s);
-          if (s === 'CRITICAL' || s === 'WARNING') {
-            const already = flagged.find(f => f.key === p.key);
-            if (!already) {
-              flagged.push({ key: p.key, label: p.label, value: row[p.key], unit: p.unit, status: s });
-            } else if (s === 'CRITICAL' && already.status !== 'CRITICAL') {
-              already.status = 'CRITICAL';
-              already.value = row[p.key];
+        const statuses = [];
+        const flagged = [];
+        rows.forEach(row => {
+          numParams.forEach(p => {
+            const s = row[p.key + '__status'];
+            if (s) statuses.push(s);
+            if (s === 'CRITICAL' || s === 'WARNING') {
+              const already = flagged.find(f => f.key === p.key && f.sourceKey === mKey);
+              if (!already) {
+                flagged.push({ key: p.key, label: p.label, value: row[p.key], unit: p.unit, status: s, sourceKey: mKey, sourceLabel: mCfg.label });
+              } else if (s === 'CRITICAL' && already.status !== 'CRITICAL') {
+                already.status = 'CRITICAL';
+                already.value = row[p.key];
+              }
             }
-          }
+          });
         });
-      });
+        return { hasData: rows.length > 0, statuses, flagged, rows };
+      }));
+
+      const hasData = memberResults.some(m => m.hasData);
+      const allStatuses = memberResults.flatMap(m => m.statuses);
+      const flagged = memberResults.flatMap(m => m.flagged);
 
       return [key, {
         key, label: secCfg.label, color: secCfg.color,
-        hasData: rows.length > 0,
+        hasData,
         status:  _worstStatus(allStatuses.length ? allStatuses : ['NO_DATA']),
         flagged: flagged.sort((a, b) => (b.status === 'CRITICAL' ? 1 : 0) - (a.status === 'CRITICAL' ? 1 : 0)),
-        _rows: rows,
+        _rows: memberResults[0].rows, // the group's own sheet — used for KPI sums below
       }];
     } catch (err) {
       console.error(`Dashboard section ${key} error:`, err.message);
@@ -431,7 +446,10 @@ async function getIndexData(payload, sheets) {
   const sectionResults = {};
   results.forEach(([key, sec]) => { delete sec._rows; sectionResults[key] = sec; });
 
-  return { date: _filterLabel(filter), sections: sectionResults, kpis };
+  return {
+    date: _filterLabel(filter), sections: sectionResults, kpis,
+    groups: SECTION_GROUPS, groupTabLabels: GROUP_TAB_LABELS,
+  };
 }
 
 // ─── SECTION DETAIL DATA ──────────────────────────────────────────────────────

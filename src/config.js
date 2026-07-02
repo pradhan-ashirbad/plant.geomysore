@@ -48,6 +48,28 @@ const SECTIONS = {
   gold:        { label:'Gold Production',         color:'#B8860B', sheet: SH.GOLD       },
 };
 
+// ─── DASHBOARD GROUPING ───────────────────────────────────────────────────────
+// Some sections are shown as a single dashboard card whose detail page has
+// sub-tabs for related sheets, instead of each sheet getting its own card.
+// The group key's own sheet is always the first (default) tab.
+const SECTION_GROUPS = {
+  milling:  ['milling', 'cyclone', 'thickener'],
+  leaching: ['leaching', 'slurry', 'carbon', 'screen'],
+};
+
+// Section keys that are folded into a group and should not get their own
+// dashboard card (every member of a group except the group's own key).
+const HIDDEN_FROM_DASHBOARD = new Set(
+  Object.entries(SECTION_GROUPS).flatMap(([parent, members]) => members.filter(m => m !== parent))
+);
+
+// Friendlier tab labels for grouped sub-sections (dashboard card titles are
+// unaffected — this only controls the sub-tab text on the detail page).
+const GROUP_TAB_LABELS = {
+  leaching: 'Leaching Tanks',
+  carbon:   'Carbon in Tank',
+};
+
 const ROLE_CONFIG = {
   supervisor: {
     canSeeAll: true, canWrite: 'all', canAdmin: true, canTargets: true, canChemAdmin: true
@@ -339,5 +361,6 @@ module.exports = {
   DB_START, SH, LT_TANKS, DT_TANKS, AU_LIMIT_TANKS, CARBON_TANKS,
   SECTIONS, ROLE_CONFIG, SHIFT_OPTS, LEACH_TIMES, TIME_SHEETS,
   SECTION_CHEMICALS, ENTRY_SHEETS_BY_ROLE, SHEET_PARAMS,
+  SECTION_GROUPS, HIDDEN_FROM_DASHBOARD, GROUP_TAB_LABELS,
   canWrite, canSeeSection, canManageTargets,
 };

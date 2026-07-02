@@ -9,7 +9,8 @@
 const STATE = {
   token: null, role: null, name: null, roleLabel: null,
   filterMode: 'date', filterDate: null, filterMonth: null,
-  detailMode: 'date', currentSec: null,
+  detailMode: 'date', currentSec: null, currentSubSec: null,
+  sectionGroups: {}, groupTabLabels: {}, subSecLabels: {},
   charts: {},
   adminPanel: 'users',
 };
@@ -275,8 +276,9 @@ async function loadAlerts() {
 // ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
 
 function exportSection() {
-  if (!STATE.currentSec) { showToast('Open a section first', 'error'); return; }
-  const params = new URLSearchParams({ token: STATE.token, section: STATE.currentSec });
+  const activeKey = STATE.currentSubSec || STATE.currentSec;
+  if (!activeKey) { showToast('Open a section first', 'error'); return; }
+  const params = new URLSearchParams({ token: STATE.token, section: activeKey });
   Object.entries(detFilterPayload()).forEach(([k, v]) => { if (v) params.set(k, v); });
   window.location.href = '/api/export/section?' + params.toString();
 }
@@ -347,6 +349,8 @@ async function loadDashboard() {
 
   document.getElementById('dash-info').textContent = data.date ? 'Showing: ' + data.date : '';
   renderKpiStrip(data.kpis);
+  STATE.sectionGroups = data.groups || {};
+  STATE.groupTabLabels = data.groupTabLabels || {};
 
   const sections = data.sections || {};
   const keys = Object.keys(sections);
@@ -368,11 +372,19 @@ async function loadDashboard() {
     } else {
       const shown = sec.flagged.slice(0, 5);
       const more  = sec.flagged.length - 5;
-      bodyHtml = shown.map(f => `
-        <div class="flag-item">
-          <span class="flag-label">${f.label}</span>
+      bodyHtml = shown.map(f => {
+        // Flags from a grouped sub-sheet (e.g. Slurry Density on the
+        // Leaching card) jump straight to that sub-tab when clicked.
+        const jumpTo = f.sourceKey && f.sourceKey !== key ? f.sourceKey : '';
+        const clickAttr = jumpTo
+          ? ` onclick="event.stopPropagation();openSection('${key}','${jumpTo}')" style="cursor:pointer" title="View in ${f.sourceLabel}"`
+          : '';
+        return `
+        <div class="flag-item"${clickAttr}>
+          <span class="flag-label">${f.label}${jumpTo ? ` <span style="color:var(--txt3);font-weight:400">(${f.sourceLabel})</span>` : ''}</span>
           <span class="flag-val ${statusClass(f.status)}">${fmt(f.value)} ${f.unit || ''}</span>
-        </div>`).join('') +
+        </div>`;
+      }).join('') +
         (more > 0 ? `<div style="font-size:11px;color:var(--txt3);padding-top:4px">+${more} more…</div>` : '');
     }
 
@@ -392,9 +404,10 @@ async function loadDashboard() {
 
 // ─── SECTION DETAIL ───────────────────────────────────────────────────────────
 
-function openSection(key) {
-  STATE.currentSec  = key;
-  STATE.detailMode  = STATE.filterMode;
+function openSection(key, subKey) {
+  STATE.currentSec    = key;
+  STATE.currentSubSec = subKey || key;
+  STATE.detailMode    = STATE.filterMode;
   document.getElementById('det-date').value  = document.getElementById('dash-date').value  || STATE.filterDate;
   document.getElementById('det-month').value = document.getElementById('dash-month').value || STATE.filterMonth || '';
   document.getElementById('det-from').value  = document.getElementById('dash-from').value  || '';
@@ -402,6 +415,33 @@ function openSection(key) {
   detSetMode(STATE.detailMode);
   showPage('detail');
   loadDetail();
+}
+
+// Switches the active sub-tab within a grouped section (e.g. Leaching's
+// Slurry Samples / Carbon in Tank / Screen tabs) and reloads that sheet's data.
+function switchSubTab(subKey) {
+  STATE.currentSubSec = subKey;
+  // Cached previous-month overlay data belongs to the old sub-tab's sheet.
+  STATE.monthOverlay = false;
+  STATE.prevSectionData = null;
+  const cb = document.getElementById('det-overlay'); if (cb) cb.checked = false;
+  loadDetail();
+}
+
+function subTabsHtml() {
+  const members = (STATE.sectionGroups || {})[STATE.currentSec];
+  if (!members || members.length < 2) return '';
+  return `<div class="sub-tabs">${members.map(m =>
+    `<button class="sub-tab ${m === STATE.currentSubSec ? 'active' : ''}" onclick="switchSubTab('${m}')">${_subTabLabel(m)}</button>`
+  ).join('')}</div>`;
+}
+
+// Falls back to the label the last-fetched section data reported for this
+// key (data.label), since the client doesn't hold the full section catalog.
+function _subTabLabel(key) {
+  if ((STATE.groupTabLabels || {})[key]) return STATE.groupTabLabels[key];
+  if (STATE.subSecLabels && STATE.subSecLabels[key]) return STATE.subSecLabels[key];
+  return key.charAt(0).toUpperCase() + key.slice(1);
 }
 
 function detSetMode(mode) {
@@ -441,25 +481,32 @@ async function loadDetail() {
   Object.values(STATE.charts).forEach(c => { try { c && c.destroy && c.destroy(); } catch (e) {} });
   STATE.charts = {};
 
-  const payload = { section: STATE.currentSec, ...detFilterPayload() };
+  const activeKey = STATE.currentSubSec || STATE.currentSec;
+  const payload = { section: activeKey, ...detFilterPayload() };
 
   const data = await api('section', payload);
   if (!data || data.error) {
-    content.innerHTML = `<div class="nodata">${data ? data.error : 'Error loading data'}</div>`;
+    content.innerHTML = `${subTabsHtml()}<div class="nodata">${data ? data.error : 'Error loading data'}</div>`;
     return;
   }
 
-  document.getElementById('det-title').textContent = data.label;
+  // Remember this sub-tab's real label so the tab bar can show it even
+  // before its data has ever been fetched in this session.
+  STATE.subSecLabels = STATE.subSecLabels || {};
+  STATE.subSecLabels[activeKey] = data.label;
+
+  const isGrouped = (STATE.sectionGroups || {})[STATE.currentSec] && STATE.sectionGroups[STATE.currentSec].length > 1;
+  document.getElementById('det-title').textContent = isGrouped ? (STATE.subSecLabels[STATE.currentSec] || data.label) : data.label;
   const modeLbl = STATE.detailMode === 'date' ? 'Date: ' : STATE.detailMode === 'month' ? 'Month: ' : 'Range: ';
-  document.getElementById('det-sub').textContent   = modeLbl + (data.date || '');
+  document.getElementById('det-sub').textContent   = (isGrouped ? data.label + ' · ' : '') + modeLbl + (data.date || '');
   STATE.lastSectionData = data;
 
   if (!data.hasData) {
-    content.innerHTML = '<div class="nodata">No data for this period.</div>';
+    content.innerHTML = `${subTabsHtml()}<div class="nodata">No data for this period.</div>`;
     return;
   }
 
-  content.innerHTML = renderSection(data);
+  content.innerHTML = subTabsHtml() + renderSection(data);
 
   // Build charts after DOM settles
   setTimeout(() => buildSectionCharts(data), 60);
@@ -1185,7 +1232,7 @@ async function toggleMonthOverlay() {
   }
 
   const prevMonth = _prevMonthOf(curMonth);
-  const prevData = await api('section', { section: STATE.currentSec, month: prevMonth });
+  const prevData = await api('section', { section: STATE.currentSubSec || STATE.currentSec, month: prevMonth });
   if (!prevData || prevData.error) {
     showToast(prevData ? prevData.error : 'Could not load previous month', 'error');
     checkbox.checked = false;
