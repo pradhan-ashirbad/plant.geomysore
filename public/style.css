@@ -619,3 +619,18 @@ body {
   .modal-box { padding: 18px; }
   .form-grid2 { grid-template-columns: 1fr !important; }
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   CHART TOOLBAR (reset zoom / download PNG)
+═══════════════════════════════════════════════════════════════════ */
+.chart-toolbar {
+  position: absolute; top: 4px; right: 4px; z-index: 5;
+  display: flex; gap: 4px; opacity: .55; transition: opacity .15s;
+}
+.chart-canvas-wrap:hover .chart-toolbar { opacity: 1; }
+.chart-tool-btn {
+  background: var(--bg2); border: 1px solid var(--bdr); border-radius: 4px;
+  padding: 2px 7px; font-size: 12px; line-height: 1.5; cursor: pointer;
+  color: var(--txt2); font-family: var(--font);
+}
+.chart-tool-btn:hover { border-color: var(--gold); color: var(--gold); }

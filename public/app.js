@@ -413,6 +413,11 @@ function detSetMode(mode) {
   document.getElementById('det-date').style.display        = mode === 'date'  ? '' : 'none';
   document.getElementById('det-month').style.display       = mode === 'month' ? '' : 'none';
   document.getElementById('det-range-wrap').style.display  = mode === 'range' ? 'inline-flex' : 'none';
+  document.getElementById('det-overlay-wrap').style.display = mode === 'month' ? 'inline-flex' : 'none';
+  if (mode !== 'month' && STATE.monthOverlay) {
+    STATE.monthOverlay = false; STATE.prevSectionData = null;
+    const cb = document.getElementById('det-overlay'); if (cb) cb.checked = false;
+  }
 }
 
 function detFilterPayload() {
@@ -924,10 +929,16 @@ function buildTankProfileChart(canvasId, latestRow, tanks, keyFn, label, lim) {
   buildChart(canvasId, tanks, [
     { label, data: vals, backgroundColor: 'rgba(184,134,11,.65)', type: 'bar' },
     ...limitBandDatasets(lim, tanks),
-  ], {});
+  ], {}, { noZoom: true });
 }
 
-function buildChart(canvasId, labels, datasets, scales = {}) {
+/**
+ * opts.onPointClick(label, index) — called when a data point is clicked;
+ * used to drill from a month/range trend chart into that specific date.
+ * opts.noZoom — disable pan/zoom for charts where it doesn't make sense
+ * (e.g. tank-profile bars with categorical, not sequential, x-axis).
+ */
+function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (STATE.charts[canvasId]) {
@@ -936,16 +947,28 @@ function buildChart(canvasId, labels, datasets, scales = {}) {
   }
   if (typeof Chart === 'undefined') return;
 
+  const hasZoomPlugin = typeof Chart !== 'undefined' && Chart.registry && Chart.registry.plugins.get('zoom');
+  const zoomConfig = (!opts.noZoom && hasZoomPlugin) ? {
+    pan:  { enabled: true, mode: 'x', modifierKey: null },
+    zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+  } : undefined;
+
   STATE.charts[canvasId] = new Chart(canvas, {
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
+      onClick: (evt, elements, chart) => {
+        if (!opts.onPointClick || !elements.length) return;
+        const idx = elements[0].index;
+        opts.onPointClick(chart.data.labels[idx], idx);
+      },
       plugins: {
         legend: {
           display: true, position: 'bottom',
           labels: { boxWidth: 12, font: { size: 10 }, filter: item => item.text !== '__band__' },
         },
         tooltip: { filter: item => item.dataset.label !== '__band__' },
+        ...(zoomConfig ? { zoom: zoomConfig } : {}),
       },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
@@ -961,6 +984,46 @@ function buildChart(canvasId, labels, datasets, scales = {}) {
       },
     },
   });
+
+  attachChartToolbar(canvasId, !!zoomConfig);
+}
+
+/**
+ * Adds a small floating toolbar (⟲ reset zoom, ⬇ PNG) to a chart's
+ * canvas wrapper. Idempotent — safe to call every time a chart rebuilds.
+ */
+function attachChartToolbar(canvasId, showZoomReset) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  const wrap = canvas.closest('.chart-canvas-wrap');
+  if (!wrap) return;
+  wrap.style.position = 'relative';
+
+  let bar = wrap.querySelector('.chart-toolbar');
+  if (!bar) {
+    bar = document.createElement('div');
+    bar.className = 'chart-toolbar';
+    wrap.appendChild(bar);
+  }
+  bar.innerHTML = `
+    ${showZoomReset ? `<button class="chart-tool-btn" title="Reset zoom" onclick="resetChartZoom('${canvasId}')">⟲</button>` : ''}
+    <button class="chart-tool-btn" title="Download PNG" onclick="downloadChartPng('${canvasId}')">⬇</button>`;
+}
+
+function resetChartZoom(canvasId) {
+  const chart = STATE.charts[canvasId];
+  if (chart && typeof chart.resetZoom === 'function') chart.resetZoom();
+}
+
+function downloadChartPng(canvasId) {
+  const chart = STATE.charts[canvasId];
+  if (!chart) return;
+  const a = document.createElement('a');
+  a.href = chart.toBase64Image();
+  a.download = canvasId.replace(/^chart-/, '') + '.png';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 }
 
 function buildSectionCharts(data) {
@@ -974,26 +1037,38 @@ function buildSectionCharts(data) {
   const labels = rows.map(r => r.__date || r.__time || '');
 
   if (key === 'crushing') {
-    const prodVals = rows.map(r => { const v = parseFloat(r['Production']);    return isNaN(v) ? null : v; });
-    const tphVals  = rows.map(r => { const v = parseFloat(r['TPH']);           return isNaN(v) ? null : v; });
+    const overlay = _overlayContext(data, isMonth);
+    const chartLabels = overlay ? overlay.labels : labels;
+    const prodVals = overlay ? overlay.cur('Production') : rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
+    const tphVals  = overlay ? overlay.cur('TPH')        : rows.map(r => { const v = parseFloat(r['TPH']);        return isNaN(v) ? null : v; });
     const dailyTarget = _dailyTarget(data, 'Production');
-    buildChart('chart-crushing-prod', labels, [
+    const datasets = [
       { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(192,57,43,.65)', type: 'bar',  yAxisID: 'y'  },
       { label: 'TPH (t/hr)',     data: tphVals,  borderColor: '#2471A3', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
-      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Target (t)'),
-    ], { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 't/hr' } } });
+      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Target (t)'),
+      ..._overlayDataset(overlay, 'Production', 'y'),
+    ];
+    buildChart('chart-crushing-prod', chartLabels, datasets,
+      { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 't/hr' } } },
+      { onPointClick: _drillClickHandler(data, isMonth, overlay) });
     buildCumulativeChart('chart-crushing-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
   }
 
   if (key === 'milling') {
-    const prodVals = rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
-    const fgVals   = rows.map(r => { const v = parseFloat(r['Feed Grade']); return isNaN(v) ? null : v; });
+    const overlay = _overlayContext(data, isMonth);
+    const chartLabels = overlay ? overlay.labels : labels;
+    const prodVals = overlay ? overlay.cur('Production')  : rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
+    const fgVals   = overlay ? overlay.cur('Feed Grade')  : rows.map(r => { const v = parseFloat(r['Feed Grade']); return isNaN(v) ? null : v; });
     const dailyTarget = _dailyTarget(data, 'Production');
-    buildChart('chart-milling-prod', labels, [
+    const datasets = [
       { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(36,113,163,.65)', type: 'bar',  yAxisID: 'y'  },
       { label: 'Feed Grade (g/t)', data: fgVals, borderColor: '#B8860B', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
-      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Target (t)'),
-    ], { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 'g/t' } } });
+      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Target (t)'),
+      ..._overlayDataset(overlay, 'Production', 'y'),
+    ];
+    buildChart('chart-milling-prod', chartLabels, datasets,
+      { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 'g/t' } } },
+      { onPointClick: _drillClickHandler(data, isMonth, overlay) });
     buildCumulativeChart('chart-milling-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
   }
 
@@ -1011,18 +1086,121 @@ function buildSectionCharts(data) {
   }
 
   if (key === 'gold') {
-    const massVals = rows.map(r => { const v = parseFloat(r['Dore Mass (g)']); return isNaN(v) ? null : v; });
+    const overlay = _overlayContext(data, isMonth);
+    const chartLabels = overlay ? overlay.labels : labels;
+    const massVals = overlay ? overlay.cur('Dore Mass (g)') : rows.map(r => { const v = parseFloat(r['Dore Mass (g)']); return isNaN(v) ? null : v; });
     const dailyTarget = _dailyTarget(data, 'Au Content (g)');
-    buildChart('chart-gold-prod', labels, [
+    const datasets = [
       { label: 'Dore Mass (g)', data: massVals, backgroundColor: 'rgba(184,134,11,.6)', type: 'bar' },
-      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Au Target (g)'),
-    ], {});
+      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Au Target (g)'),
+      ..._overlayDataset(overlay, 'Dore Mass (g)', 'y'),
+    ];
+    buildChart('chart-gold-prod', chartLabels, datasets, {}, { onPointClick: _drillClickHandler(data, isMonth, overlay) });
     buildCumulativeChart('chart-gold-cum', data.dailyRows, 'Au Content (g)', (data.targets||{})['Au Content (g)'], data.targetMonth, data.targetDaysInMonth, 'Au Content (g)');
   }
 
   if (key === 'carbon') {
     buildCarbonTankProfile(data);
   }
+}
+
+// Extracts a 'YYYY-MM-DD' date string's day-of-month as a number, or null.
+function dayOfMonth(dateStr) {
+  const d = parseInt(String(dateStr || '').slice(8, 10), 10);
+  return isNaN(d) ? null : d;
+}
+
+/**
+ * Builds a day-of-month-aligned view of the current section vs. the cached
+ * previous month (STATE.prevSectionData), so two months' curves overlay on
+ * the same 1..31 x-axis. Returns null unless overlay mode is on, we're in a
+ * full-month view, and the cached previous month matches this section.
+ */
+function _overlayContext(data, isMonth) {
+  if (!isMonth || !STATE.monthOverlay || !STATE.prevSectionData) return null;
+  const prev = STATE.prevSectionData;
+  if (!prev || prev.error || prev.section !== data.section) return null;
+
+  const labels = Array.from({ length: 31 }, (_, i) => String(i + 1));
+  const curByDay = {}, prevByDay = {};
+  (data.dailyRows || []).forEach(r => { const d = dayOfMonth(r.__date); if (d) curByDay[d] = r; });
+  (prev.dailyRows  || []).forEach(r => { const d = dayOfMonth(r.__date); if (d) prevByDay[d] = r; });
+
+  return {
+    labels,
+    cur:  key => labels.map((_, i) => { const r = curByDay[i + 1];  const v = r ? parseFloat(r[key]) : NaN; return isNaN(v) ? null : v; }),
+    prev: key => labels.map((_, i) => { const r = prevByDay[i + 1]; const v = r ? parseFloat(r[key]) : NaN; return isNaN(v) ? null : v; }),
+    prevLabel: prev.targetMonth || prev.date || 'previous month',
+  };
+}
+
+function _overlayDataset(overlay, key, yAxisID) {
+  if (!overlay) return [];
+  return [{
+    label: `Prev month (${overlay.prevLabel})`, data: overlay.prev(key),
+    borderColor: 'rgba(100,100,100,.65)', borderDash: [4, 3], backgroundColor: 'transparent',
+    type: 'line', yAxisID: yAxisID || 'y', fill: false, pointRadius: 0, tension: .3,
+  }];
+}
+
+/**
+ * Click handler for month/range trend charts: navigates section detail to
+ * the exact date clicked. When overlay mode has switched the x-axis to
+ * day-of-month numbers, reconstructs the date from the current month.
+ */
+function _drillClickHandler(data, isMonth, overlay) {
+  if (!isMonth) return undefined;
+  return (label) => {
+    let dateStr = label;
+    if (overlay) {
+      const day = parseInt(label, 10);
+      if (isNaN(day)) return;
+      const month = data.targetMonth || ((data.dailyRows || [])[0] && data.dailyRows[0].__date.slice(0, 7));
+      if (!month) return;
+      dateStr = `${month}-${String(day).padStart(2, '0')}`;
+    }
+    if (!dateStr) return;
+    document.getElementById('det-date').value = dateStr;
+    detSetMode('date');
+    loadDetail();
+  };
+}
+
+async function toggleMonthOverlay() {
+  const checkbox = document.getElementById('det-overlay');
+  const checked = checkbox.checked;
+
+  if (!checked) {
+    STATE.monthOverlay = false;
+    STATE.prevSectionData = null;
+    if (STATE.lastSectionData) buildSectionCharts(STATE.lastSectionData);
+    return;
+  }
+
+  const curMonth = document.getElementById('det-month').value;
+  if (!curMonth) {
+    showToast('Pick a month first', 'error');
+    checkbox.checked = false;
+    return;
+  }
+
+  const prevMonth = _prevMonthOf(curMonth);
+  const prevData = await api('section', { section: STATE.currentSec, month: prevMonth });
+  if (!prevData || prevData.error) {
+    showToast(prevData ? prevData.error : 'Could not load previous month', 'error');
+    checkbox.checked = false;
+    return;
+  }
+
+  STATE.monthOverlay = true;
+  STATE.prevSectionData = prevData;
+  if (STATE.lastSectionData) buildSectionCharts(STATE.lastSectionData);
+}
+
+function _prevMonthOf(monthStr) {
+  const [y, m] = monthStr.split('-').map(Number);
+  const d = new Date(y, m - 2, 1);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
 // Converts a monthly target total into a per-day figure, only meaningful
@@ -1043,15 +1221,16 @@ function buildLeachMainChart(data) {
   const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
   if (!rows || !rows.length) return;
 
-  const labels = rows.map(r => r.__date || r.__time || '');
   const mainKey = isDT ? `${tank} CN (ppm)` : `${tank} NaCN (ppm)`;
-  const mainLabel = isDT ? `${tank} CN (ppm)` : `${tank} NaCN (ppm)`;
+  const mainLabel = mainKey;
   const auKey = `${tank} Au in Liquor (ppm)`;
   const limitId = isDT ? `DT_AU_${tank}` : `LT_AU_${tank}`;
-
-  const mainVals = rows.map(r => { const v = parseFloat(r[mainKey]); return isNaN(v) ? null : v; });
-  const auVals   = rows.map(r => { const v = parseFloat(r[auKey]);   return isNaN(v) ? null : v; });
   const auLim = (data.limits || {})[limitId];
+
+  const overlay = _overlayContext(data, isMonth);
+  const labels = overlay ? overlay.labels : rows.map(r => r.__date || r.__time || '');
+  const mainVals = overlay ? overlay.cur(mainKey) : rows.map(r => { const v = parseFloat(r[mainKey]); return isNaN(v) ? null : v; });
+  const auVals   = overlay ? overlay.cur(auKey)   : rows.map(r => { const v = parseFloat(r[auKey]);   return isNaN(v) ? null : v; });
 
   document.getElementById('chart-leach-main-title') &&
     (document.getElementById('chart-leach-main-title').textContent = `Leaching Trend — ${tank}`);
@@ -1060,7 +1239,8 @@ function buildLeachMainChart(data) {
     { label: mainLabel, data: mainVals, borderColor: '#1A7A4A', fill: false, tension: .3, pointRadius: 3 },
     { label: `${tank} Au (ppm)`, data: auVals, borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 3, yAxisID: 'y2' },
     ...limitBandDatasets(auLim, labels, 'y2'),
-  ], { y2: { title: { display: true, text: 'Au ppm' } } });
+    ..._overlayDataset(overlay, mainKey, 'y'),
+  ], { y2: { title: { display: true, text: 'Au ppm' } } }, { onPointClick: _drillClickHandler(data, isMonth, overlay) });
 }
 
 function switchLeachChartTank() {
@@ -1550,7 +1730,7 @@ function buildParetoChart(topReasons) {
   ], {
     y:  { title: { display: true, text: 'hrs' } },
     y2: { title: { display: true, text: '%' }, min: 0, max: 100 },
-  });
+  }, { noZoom: true });
 }
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
