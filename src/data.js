@@ -479,9 +479,31 @@ async function getSectionData(payload, sheets) {
         if (p.isText || p.isTime || p.isSelect) return;
         const vals = g._rows.map(r => parseFloat(r[p.key])).filter(v => !isNaN(v));
         agg[p.key] = vals.length ? +(vals.reduce((a,b)=>a+b,0)/vals.length).toFixed(3) : '';
+        // Sum alongside the average — production-style totals need sums, not
+        // averages, for cumulative-vs-target trajectories.
+        agg[p.key + '__sum'] = vals.length ? +vals.reduce((a,b)=>a+b,0).toFixed(3) : '';
       });
       return agg;
     }).sort((a, b) => a.__date.localeCompare(b.__date));
+  }
+
+  // ── Monthly targets for this section's parameters (for target lines /
+  // cumulative-vs-trajectory charts on the client) ──
+  const targetMonth = filter.month || (filter.date || filter.to || filter.from || '').slice(0, 7);
+  let targets = {};
+  let targetDaysInMonth = null;
+  if (targetMonth) {
+    try {
+      const targetsMap = await getTargetsMap(targetMonth, sheets);
+      params.forEach(p => {
+        const v = targetsMap[`${section}:${p.key}`];
+        if (v !== undefined) targets[p.key] = v;
+      });
+      if (Object.keys(targets).length) {
+        const [y, m] = targetMonth.split('-').map(Number);
+        targetDaysInMonth = new Date(y, m, 0).getDate();
+      }
+    } catch (e) { /* targets sheet unavailable — omit */ }
   }
 
   return {
@@ -489,6 +511,7 @@ async function getSectionData(payload, sheets) {
     date: _filterLabel(filter),
     isAggregate,
     hasData, rows, dailyRows, params, stoppages, chemicals, limits,
+    targets, targetMonth, targetDaysInMonth,
   };
 }
 

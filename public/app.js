@@ -512,9 +512,10 @@ function renderCrushing(data) {
       </div>
     </div>
     <div class="chart-wrap">
-      <div class="chart-title">Production Trend</div>
+      <div class="chart-title">Production Trend${(data.targets||{})['Production'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
       <div class="chart-canvas-wrap"><canvas id="chart-crushing-prod"></canvas></div>
     </div>
+    ${cumulativeChartHtml(data, 'Production', 'crushing-cum', 'Production (t)')}
     ${chemStrip(data.chemicals)}
     ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
@@ -551,9 +552,10 @@ function renderMilling(data) {
       </div>
     </div>
     <div class="chart-wrap">
-      <div class="chart-title">Milling Trend</div>
+      <div class="chart-title">Milling Trend${(data.targets||{})['Production'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
       <div class="chart-canvas-wrap"><canvas id="chart-milling-prod"></canvas></div>
     </div>
+    ${cumulativeChartHtml(data, 'Production', 'milling-cum', 'Production (t)')}
     ${chemStrip(data.chemicals)}
     ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
@@ -561,20 +563,31 @@ function renderMilling(data) {
 
 // ── Leaching ──────────────────────────────────────────────────────────────────
 function renderLeaching(data) {
-  const leachParam = 'nacn';
+  const leachParam = STATE.leachHmParam || 'nacn';
+  const leachTank  = STATE.leachChartTank || 'LT9';
   return `
     <div class="section-block">
       <div class="section-block-title">Leaching Tank Heatmap</div>
       <div class="param-sel-btns">
-        <button class="param-sel-btn active" id="lhm-btn-nacn" onclick="switchLeachParam('nacn')">NaCN (ppm)</button>
-        <button class="param-sel-btn" id="lhm-btn-ph"   onclick="switchLeachParam('ph')">pH</button>
-        <button class="param-sel-btn" id="lhm-btn-au"   onclick="switchLeachParam('au')">Au in Liquor</button>
-        <button class="param-sel-btn" id="lhm-btn-do"   onclick="switchLeachParam('do')">DO (ppm)</button>
+        <button class="param-sel-btn ${leachParam==='nacn'?'active':''}" id="lhm-btn-nacn" onclick="switchLeachParam('nacn')">NaCN (ppm)</button>
+        <button class="param-sel-btn ${leachParam==='ph'?'active':''}" id="lhm-btn-ph"   onclick="switchLeachParam('ph')">pH</button>
+        <button class="param-sel-btn ${leachParam==='au'?'active':''}" id="lhm-btn-au"   onclick="switchLeachParam('au')">Au in Liquor</button>
+        <button class="param-sel-btn ${leachParam==='do'?'active':''}" id="lhm-btn-do"   onclick="switchLeachParam('do')">DO (ppm)</button>
       </div>
       <div id="leach-heatmap-wrap">${renderLeachingHeatmap(data, leachParam)}</div>
     </div>
+    <div class="section-block">
+      <div class="section-block-title">Tank Profile — Latest Reading</div>
+      <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-leach-tankprofile"></canvas></div>
+      <div class="chart-canvas-wrap" id="leach-tankprofile-dt-wrap" style="height:160px;margin-top:8px"><canvas id="chart-leach-tankprofile-dt"></canvas></div>
+    </div>
     <div class="chart-wrap">
-      <div class="chart-title">Leaching Trend — LT9 NaCN</div>
+      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div class="chart-title" id="chart-leach-main-title">Leaching Trend — ${leachTank}</div>
+        <select id="leach-chart-tank" class="filter-input" onchange="switchLeachChartTank()">
+          ${[...LEACH_LT_TANKS, ...LEACH_DT_TANKS].map(t => `<option value="${t}" ${t===leachTank?'selected':''}>${t}</option>`).join('')}
+        </select>
+      </div>
       <div class="chart-canvas-wrap"><canvas id="chart-leach-main"></canvas></div>
     </div>
     ${stoppagesHtml(data.stoppages)}`;
@@ -582,11 +595,13 @@ function renderLeaching(data) {
 
 window._leachData = null;
 function switchLeachParam(param) {
+  STATE.leachHmParam = param;
   document.querySelectorAll('.param-sel-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('lhm-btn-' + param);
   if (btn) btn.classList.add('active');
   if (window._leachData) {
     document.getElementById('leach-heatmap-wrap').innerHTML = renderLeachingHeatmap(window._leachData, param);
+    buildLeachTankProfile(window._leachData, param);
   }
 }
 
@@ -691,6 +706,10 @@ function renderCarbon(data) {
         }).join('')}
       </div>
     </div>` : ''}
+    ${latest ? `<div class="section-block">
+      <div class="section-block-title">Carbon Profile — All Tanks</div>
+      <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-carbon-profile"></canvas></div>
+    </div>` : ''}
     ${genericTableHtml(data)}`;
 }
 
@@ -717,15 +736,31 @@ function renderGold(data) {
       </div>
     </div>
     <div class="chart-wrap">
-      <div class="chart-title">Gold Production Trend</div>
+      <div class="chart-title">Gold Production Trend${(data.targets||{})['Au Content (g)'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
       <div class="chart-canvas-wrap"><canvas id="chart-gold-prod"></canvas></div>
     </div>
+    ${cumulativeChartHtml(data, 'Au Content (g)', 'gold-cum', 'Au Content (g)')}
     ${genericTableHtml(data)}`;
 }
 
 // ── Generic ───────────────────────────────────────────────────────────────────
 function renderGenericSection(data) {
   return `${chemStrip(data.chemicals)}${stoppagesHtml(data.stoppages)}${genericTableHtml(data)}`;
+}
+
+/**
+ * Cumulative-vs-target chart block markup — only rendered when a target
+ * exists for paramKey and the view spans a full month (needed to compute
+ * a meaningful trajectory).
+ */
+function cumulativeChartHtml(data, paramKey, canvasId, label) {
+  const target = (data.targets || {})[paramKey];
+  if (target == null || !data.targetDaysInMonth || !data.isAggregate) return '';
+  return `
+    <div class="chart-wrap">
+      <div class="chart-title">Cumulative ${label} vs Target (${data.targetMonth})</div>
+      <div class="chart-canvas-wrap"><canvas id="chart-${canvasId}"></canvas></div>
+    </div>`;
 }
 
 // ─── SHARED HTML HELPERS ──────────────────────────────────────────────────────
@@ -833,6 +868,65 @@ function limitBandDatasets(lim, labels, yAxisID) {
   return ds;
 }
 
+/**
+ * A flat dashed gold line representing a target value, drawn behind the
+ * actual data so it reads as a reference line rather than a series.
+ */
+function targetLineDataset(value, labels, yAxisID, label) {
+  if (value === null || value === undefined || isNaN(value)) return [];
+  return [{
+    label: label || 'Target', data: labels.map(() => value),
+    borderColor: '#B8860B', borderWidth: 1.5, borderDash: [8, 4],
+    pointRadius: 0, pointHitRadius: 0, fill: false,
+    type: 'line', yAxisID: yAxisID || 'y', order: 99,
+  }];
+}
+
+/**
+ * Renders a cumulative-actual-vs-target-trajectory chart into canvasId, for
+ * a full-month view. actual is a running sum built day-by-day across the
+ * target month from dailyRows' `${sumKey}__sum` field; trajectory is a
+ * straight line from 0 to targetTotal across the days in the month.
+ */
+function buildCumulativeChart(canvasId, dailyRows, sumKey, targetTotal, targetMonth, daysInMonth, label) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !targetTotal || !daysInMonth || !targetMonth) return;
+
+  const byDate = {};
+  (dailyRows || []).forEach(r => { byDate[r.__date] = r; });
+
+  const labels = [], actual = [], trajectory = [];
+  let running = 0;
+  for (let d = 1; d <= daysInMonth; d++) {
+    const dateStr = `${targetMonth}-${String(d).padStart(2, '0')}`;
+    labels.push(String(d));
+    const row = byDate[dateStr];
+    const sumVal = row ? parseFloat(row[sumKey + '__sum']) : NaN;
+    if (!isNaN(sumVal)) running += sumVal;
+    actual.push(+running.toFixed(2));
+    trajectory.push(+(targetTotal * d / daysInMonth).toFixed(2));
+  }
+
+  buildChart(canvasId, labels, [
+    { label: `Cumulative ${label}`, data: actual, borderColor: '#7B1E2E', backgroundColor: 'rgba(123,30,46,.12)', fill: true, tension: .25, pointRadius: 2 },
+    { label: 'Target Trajectory', data: trajectory, borderColor: '#B8860B', borderDash: [6, 4], fill: false, pointRadius: 0, tension: 0 },
+  ], { y: { title: { display: true, text: label } } });
+}
+
+/**
+ * Bar chart of a single parameter's latest value across a set of tanks —
+ * a compact "leach train health" snapshot for the current moment.
+ */
+function buildTankProfileChart(canvasId, latestRow, tanks, keyFn, label, lim) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas || !latestRow) return;
+  const vals = tanks.map(t => { const v = parseFloat(latestRow[keyFn(t)]); return isNaN(v) ? null : v; });
+  buildChart(canvasId, tanks, [
+    { label, data: vals, backgroundColor: 'rgba(184,134,11,.65)', type: 'bar' },
+    ...limitBandDatasets(lim, tanks),
+  ], {});
+}
+
 function buildChart(canvasId, labels, datasets, scales = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -882,30 +976,30 @@ function buildSectionCharts(data) {
   if (key === 'crushing') {
     const prodVals = rows.map(r => { const v = parseFloat(r['Production']);    return isNaN(v) ? null : v; });
     const tphVals  = rows.map(r => { const v = parseFloat(r['TPH']);           return isNaN(v) ? null : v; });
+    const dailyTarget = _dailyTarget(data, 'Production');
     buildChart('chart-crushing-prod', labels, [
       { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(192,57,43,.65)', type: 'bar',  yAxisID: 'y'  },
       { label: 'TPH (t/hr)',     data: tphVals,  borderColor: '#2471A3', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
+      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Target (t)'),
     ], { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 't/hr' } } });
+    buildCumulativeChart('chart-crushing-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
   }
 
   if (key === 'milling') {
     const prodVals = rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
     const fgVals   = rows.map(r => { const v = parseFloat(r['Feed Grade']); return isNaN(v) ? null : v; });
+    const dailyTarget = _dailyTarget(data, 'Production');
     buildChart('chart-milling-prod', labels, [
       { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(36,113,163,.65)', type: 'bar',  yAxisID: 'y'  },
       { label: 'Feed Grade (g/t)', data: fgVals, borderColor: '#B8860B', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
+      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Target (t)'),
     ], { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 'g/t' } } });
+    buildCumulativeChart('chart-milling-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
   }
 
   if (key === 'leaching') {
-    const nacnVals = rows.map(r => { const v = parseFloat(r['LT9 NaCN (ppm)']); return isNaN(v) ? null : v; });
-    const auVals   = rows.map(r => { const v = parseFloat(r['LT9 Au in Liquor (ppm)']); return isNaN(v) ? null : v; });
-    const auLim = (data.limits || {})['LT_AU_LT9'];
-    buildChart('chart-leach-main', labels, [
-      { label: 'LT9 NaCN (ppm)', data: nacnVals, borderColor: '#1A7A4A', fill: false, tension: .3, pointRadius: 3 },
-      { label: 'LT9 Au (ppm)',   data: auVals,   borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 3, yAxisID: 'y2' },
-      ...limitBandDatasets(auLim, labels, 'y2'),
-    ], { y2: { title: { display: true, text: 'Au ppm' } } });
+    buildLeachMainChart(data);
+    buildLeachTankProfile(data, STATE.leachHmParam || 'nacn');
   }
 
   if (key === 'filterpress') {
@@ -918,10 +1012,101 @@ function buildSectionCharts(data) {
 
   if (key === 'gold') {
     const massVals = rows.map(r => { const v = parseFloat(r['Dore Mass (g)']); return isNaN(v) ? null : v; });
+    const dailyTarget = _dailyTarget(data, 'Au Content (g)');
     buildChart('chart-gold-prod', labels, [
       { label: 'Dore Mass (g)', data: massVals, backgroundColor: 'rgba(184,134,11,.6)', type: 'bar' },
+      ...targetLineDataset(dailyTarget, labels, 'y', 'Daily Au Target (g)'),
     ], {});
+    buildCumulativeChart('chart-gold-cum', data.dailyRows, 'Au Content (g)', (data.targets||{})['Au Content (g)'], data.targetMonth, data.targetDaysInMonth, 'Au Content (g)');
   }
+
+  if (key === 'carbon') {
+    buildCarbonTankProfile(data);
+  }
+}
+
+// Converts a monthly target total into a per-day figure, only meaningful
+// when the current view spans the target's full month.
+function _dailyTarget(data, paramKey) {
+  const total = (data.targets || {})[paramKey];
+  if (total == null || !data.targetDaysInMonth) return null;
+  return +(total / data.targetDaysInMonth).toFixed(2);
+}
+
+const LEACH_LT_TANKS = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
+const LEACH_DT_TANKS = ['DT1','DT4'];
+
+function buildLeachMainChart(data) {
+  const tank = STATE.leachChartTank || 'LT9';
+  const isDT = LEACH_DT_TANKS.includes(tank);
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
+  if (!rows || !rows.length) return;
+
+  const labels = rows.map(r => r.__date || r.__time || '');
+  const mainKey = isDT ? `${tank} CN (ppm)` : `${tank} NaCN (ppm)`;
+  const mainLabel = isDT ? `${tank} CN (ppm)` : `${tank} NaCN (ppm)`;
+  const auKey = `${tank} Au in Liquor (ppm)`;
+  const limitId = isDT ? `DT_AU_${tank}` : `LT_AU_${tank}`;
+
+  const mainVals = rows.map(r => { const v = parseFloat(r[mainKey]); return isNaN(v) ? null : v; });
+  const auVals   = rows.map(r => { const v = parseFloat(r[auKey]);   return isNaN(v) ? null : v; });
+  const auLim = (data.limits || {})[limitId];
+
+  document.getElementById('chart-leach-main-title') &&
+    (document.getElementById('chart-leach-main-title').textContent = `Leaching Trend — ${tank}`);
+
+  buildChart('chart-leach-main', labels, [
+    { label: mainLabel, data: mainVals, borderColor: '#1A7A4A', fill: false, tension: .3, pointRadius: 3 },
+    { label: `${tank} Au (ppm)`, data: auVals, borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 3, yAxisID: 'y2' },
+    ...limitBandDatasets(auLim, labels, 'y2'),
+  ], { y2: { title: { display: true, text: 'Au ppm' } } });
+}
+
+function switchLeachChartTank() {
+  STATE.leachChartTank = document.getElementById('leach-chart-tank').value;
+  if (window._leachData) buildLeachMainChart(window._leachData);
+}
+
+// Bar chart of every leach/discharge tank's latest reading for the currently
+// selected heatmap parameter — a compact "leach train health" snapshot.
+function buildLeachTankProfile(data, param) {
+  const rows = data.rows || [];
+  const latest = rows[rows.length - 1];
+  if (!latest) return;
+
+  const paramKeyMap = {
+    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`,
+    au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
+  };
+  const dtKeyMap = {
+    nacn: t => `${t} CN (ppm)`, ph: t => `${t} pH`, au: t => `${t} Au in Liquor (ppm)`,
+  };
+  const btnLabel = document.querySelector(`#lhm-btn-${param}`) ? document.querySelector(`#lhm-btn-${param}`).textContent : param;
+  const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
+  buildTankProfileChart('chart-leach-tankprofile', latest, LEACH_LT_TANKS, keyFn, btnLabel);
+
+  // DT tanks only make sense for nacn(→CN)/au/ph, same as the heatmap logic
+  const dtWrap = document.getElementById('leach-tankprofile-dt-wrap');
+  if (dtKeyMap[param]) {
+    if (dtWrap) dtWrap.style.display = '';
+    buildTankProfileChart('chart-leach-tankprofile-dt', latest, LEACH_DT_TANKS, dtKeyMap[param], btnLabel);
+  } else {
+    if (dtWrap) dtWrap.style.display = 'none';
+    if (STATE.charts['chart-leach-tankprofile-dt']) {
+      try { STATE.charts['chart-leach-tankprofile-dt'].destroy(); } catch (e) {}
+      delete STATE.charts['chart-leach-tankprofile-dt'];
+    }
+  }
+}
+
+const CARBON_TANKS_LIST = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
+
+function buildCarbonTankProfile(data) {
+  const rows = data.rows || [];
+  const latest = rows[rows.length - 1];
+  if (!latest) return;
+  buildTankProfileChart('chart-carbon-profile', latest, CARBON_TANKS_LIST, t => `${t} Carbon (g/L)`, 'Carbon (g/L)');
 }
 
 // ─── ENTRY FORM ───────────────────────────────────────────────────────────────
@@ -1336,10 +1521,36 @@ async function loadReport() {
           </div>`).join('') || '<div class="nodata" style="padding:8px 0">No data</div>'}
         </div>
       </div>
+      ${(s.topReasons||[]).length ? `
+      <div style="margin-top:16px">
+        <div style="font-size:11px;font-weight:700;color:var(--txt2);margin-bottom:8px;text-transform:uppercase">Downtime Pareto</div>
+        <div class="chart-canvas-wrap" style="height:240px"><canvas id="chart-report-pareto"></canvas></div>
+      </div>` : ''}
     </div>`;
   }
 
   content.innerHTML = html;
+  if (data.stoppages && (data.stoppages.topReasons || []).length) {
+    setTimeout(() => buildParetoChart(data.stoppages.topReasons), 60);
+  }
+}
+
+// Classic Pareto: reasons ranked by hours (bars) with a cumulative-%
+// line on a secondary axis — highlights the "vital few" causes.
+function buildParetoChart(topReasons) {
+  const labels = topReasons.map(r => r.reason);
+  const hrs = topReasons.map(r => r.hrs);
+  const total = hrs.reduce((a, b) => a + b, 0) || 1;
+  let running = 0;
+  const cumPct = hrs.map(h => { running += h; return +((running / total) * 100).toFixed(1); });
+
+  buildChart('chart-report-pareto', labels, [
+    { label: 'Hours', data: hrs, backgroundColor: 'rgba(123,30,46,.65)', type: 'bar', yAxisID: 'y' },
+    { label: 'Cumulative %', data: cumPct, borderColor: '#B8860B', backgroundColor: 'transparent', type: 'line', yAxisID: 'y2', tension: .2, pointRadius: 3 },
+  ], {
+    y:  { title: { display: true, text: 'hrs' } },
+    y2: { title: { display: true, text: '%' }, min: 0, max: 100 },
+  });
 }
 
 // ─── ADMIN ────────────────────────────────────────────────────────────────────
