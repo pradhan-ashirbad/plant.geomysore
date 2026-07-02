@@ -684,7 +684,6 @@ function renderMilling(data) {
 // ── Leaching ──────────────────────────────────────────────────────────────────
 function renderLeaching(data) {
   const leachParam = STATE.leachHmParam || 'nacn';
-  const leachTank  = STATE.leachChartTank || 'LT9';
   return `
     <div class="section-block">
       <div class="section-block-title">Leaching Tank Heatmap</div>
@@ -702,13 +701,8 @@ function renderLeaching(data) {
       <div class="chart-canvas-wrap" id="leach-tankprofile-dt-wrap" style="height:160px;margin-top:8px"><canvas id="chart-leach-tankprofile-dt"></canvas></div>
     </div>
     <div class="chart-wrap">
-      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-        <div class="chart-title" id="chart-leach-main-title">Leaching Trend — ${leachTank}</div>
-        <select id="leach-chart-tank" class="filter-input" onchange="switchLeachChartTank()">
-          ${[...LEACH_LT_TANKS, ...LEACH_DT_TANKS].map(t => `<option value="${t}" ${t===leachTank?'selected':''}>${t}</option>`).join('')}
-        </select>
-      </div>
-      <div class="chart-canvas-wrap"><canvas id="chart-leach-main"></canvas></div>
+      <div class="chart-title" id="chart-leach-main-title">Leaching Trend — All Tanks</div>
+      <div class="chart-canvas-wrap" style="height:280px"><canvas id="chart-leach-main"></canvas></div>
     </div>
     ${stoppagesHtml(data.stoppages)}`;
 }
@@ -722,6 +716,7 @@ function switchLeachParam(param) {
   if (window._leachData) {
     document.getElementById('leach-heatmap-wrap').innerHTML = renderLeachingHeatmap(window._leachData, param);
     buildLeachTankProfile(window._leachData, param);
+    buildLeachMultiTankChart(window._leachData, param);
   }
 }
 
@@ -1188,8 +1183,9 @@ function buildSectionCharts(data) {
   }
 
   if (key === 'leaching') {
-    buildLeachMainChart(data);
-    buildLeachTankProfile(data, STATE.leachHmParam || 'nacn');
+    const param = STATE.leachHmParam || 'nacn';
+    buildLeachMultiTankChart(data, param);
+    buildLeachTankProfile(data, param);
   }
 
   if (key === 'filterpress') {
@@ -1329,38 +1325,42 @@ function _dailyTarget(data, paramKey) {
 const LEACH_LT_TANKS = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
 const LEACH_DT_TANKS = ['DT1','DT4'];
 
-function buildLeachMainChart(data) {
-  const tank = STATE.leachChartTank || 'LT9';
-  const isDT = LEACH_DT_TANKS.includes(tank);
+const LEACH_TANK_COLORS = {
+  LT4: '#C0392B', LT5: '#2471A3', LT6: '#1A7A4A', LT7: '#B7950B',
+  LT8: '#7D3C98', LT9: '#D35400', LT10: '#16A085',
+};
+
+// Plots every leach tank's chosen parameter (NaCN/pH/Au/DO — same selector
+// as the heatmap) as one colored line each, so all tanks compare at a
+// glance instead of viewing one tank at a time via a dropdown.
+function buildLeachMultiTankChart(data, param) {
   const isMonth = data.isAggregate || STATE.detailMode !== 'date';
   const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
   if (!rows || !rows.length) return;
 
-  const mainKey = isDT ? `${tank} CN (ppm)` : `${tank} NaCN (ppm)`;
-  const mainLabel = mainKey;
-  const auKey = `${tank} Au in Liquor (ppm)`;
-  const limitId = isDT ? `DT_AU_${tank}` : `LT_AU_${tank}`;
-  const auLim = (data.limits || {})[limitId];
+  const paramKeyMap = {
+    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`,
+    au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
+  };
+  const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
+  const btnEl = document.getElementById('lhm-btn-' + param);
+  const paramLabel = btnEl ? btnEl.textContent : param;
 
-  const overlay = _overlayContext(data, isMonth);
-  const labels = overlay ? overlay.labels : rows.map(r => r.__date || r.__time || '');
-  const mainVals = overlay ? overlay.cur(mainKey) : rows.map(r => { const v = parseFloat(r[mainKey]); return isNaN(v) ? null : v; });
-  const auVals   = overlay ? overlay.cur(auKey)   : rows.map(r => { const v = parseFloat(r[auKey]);   return isNaN(v) ? null : v; });
+  const labels = rows.map(r => r.__date || r.__time || '');
+  const datasets = LEACH_LT_TANKS.map(tank => ({
+    label: tank,
+    data: rows.map(r => { const v = parseFloat(r[keyFn(tank)]); return isNaN(v) ? null : v; }),
+    borderColor: LEACH_TANK_COLORS[tank] || '#888',
+    backgroundColor: 'transparent',
+    fill: false, tension: .3, pointRadius: 2, borderWidth: 1.75,
+  }));
 
-  document.getElementById('chart-leach-main-title') &&
-    (document.getElementById('chart-leach-main-title').textContent = `Leaching Trend — ${tank}`);
+  const titleEl = document.getElementById('chart-leach-main-title');
+  if (titleEl) titleEl.textContent = `Leaching Trend — All Tanks (${paramLabel})`;
 
-  buildChart('chart-leach-main', labels, [
-    { label: mainLabel, data: mainVals, borderColor: '#1A7A4A', fill: false, tension: .3, pointRadius: 3 },
-    { label: `${tank} Au (ppm)`, data: auVals, borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 3, yAxisID: 'y2' },
-    ...limitBandDatasets(auLim, labels, 'y2'),
-    ..._overlayDataset(overlay, mainKey, 'y'),
-  ], { y2: { title: { display: true, text: 'Au ppm' } } }, { onPointClick: _drillClickHandler(data, isMonth, overlay) });
-}
-
-function switchLeachChartTank() {
-  STATE.leachChartTank = document.getElementById('leach-chart-tank').value;
-  if (window._leachData) buildLeachMainChart(window._leachData);
+  buildChart('chart-leach-main', labels, datasets, {}, {
+    onPointClick: _drillClickHandler(data, isMonth, null),
+  });
 }
 
 // Bar chart of every leach/discharge tank's latest reading for the currently
