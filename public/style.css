@@ -522,3 +522,100 @@ body {
   margin-bottom: 20px; padding-bottom: 10px; border-bottom: 1px solid var(--bdr);
 }
 .modal-footer { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   FILTER BAR + BUTTONS
+═══════════════════════════════════════════════════════════════════ */
+.filter-bar {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.filter-input {
+  padding: 6px 10px; border: 1px solid var(--bdr); border-radius: var(--r);
+  background: var(--bg3); color: var(--txt); font-size: 12px; outline: none;
+  font-family: var(--font);
+}
+.btn-apply {
+  padding: 6px 14px; background: var(--maroon); color: #fff; border: none;
+  border-radius: var(--r); font-size: 12px; font-weight: 600; cursor: pointer;
+  font-family: var(--font);
+}
+.btn-apply:hover { filter: brightness(1.1); }
+.btn-export {
+  padding: 6px 12px; background: var(--bg3); color: var(--txt2);
+  border: 1px solid var(--bdr); border-radius: var(--r);
+  font-size: 12px; font-weight: 600; cursor: pointer; font-family: var(--font);
+}
+.btn-export:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   KPI STRIP (dashboard summary tiles)
+═══════════════════════════════════════════════════════════════════ */
+.kpi-strip {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.kpi-strip:empty { display: none; }
+.kpi-s-tile {
+  background: var(--bg2); border: 1px solid var(--bdr); border-radius: var(--r2);
+  padding: 12px 16px; position: relative; overflow: hidden;
+}
+.kpi-s-tile::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  background: var(--gold);
+}
+.kpi-s-tile.warn::before { background: var(--warn); }
+.kpi-s-tile.crit::before { background: var(--crit); }
+.kpi-s-val {
+  font-family: var(--mono); font-size: 22px; font-weight: 700; color: var(--txt);
+  line-height: 1.1;
+}
+.kpi-s-tile.crit .kpi-s-val { color: var(--crit); }
+.kpi-s-tile.warn .kpi-s-val { color: var(--warn); }
+.kpi-s-label { font-size: 11px; color: var(--txt2); font-weight: 600; margin-top: 2px; }
+.kpi-s-unit  { font-size: 10px; color: var(--txt3); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   LOADING SKELETONS
+═══════════════════════════════════════════════════════════════════ */
+.skel-card {
+  background: var(--bg2); border: 1px solid var(--bdr); border-radius: var(--r2);
+  padding: 16px; display: flex; flex-direction: column; gap: 10px;
+  min-height: 120px;
+}
+.skel-line {
+  height: 14px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--bg3) 25%, var(--bdr) 50%, var(--bg3) 75%);
+  background-size: 200% 100%;
+  animation: skel-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skel-shimmer {
+  0%   { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   MOBILE POLISH
+═══════════════════════════════════════════════════════════════════ */
+@media (max-width: 640px) {
+  #nav { height: auto; flex-wrap: wrap; padding: 8px 12px; }
+  #nav-clock, #nav-name { display: none; }
+  .nav-tab { padding: 6px 10px; font-size: 11px; }
+
+  #page-dashboard > div, #page-detail > div, #page-alerts > div,
+  #page-entry > div, #page-targets > div, #page-report > div { padding: 12px; }
+
+  .filter-bar { gap: 6px; }
+  .filter-input { font-size: 11px; padding: 5px 8px; }
+
+  .kpi-strip { grid-template-columns: repeat(2, 1fr); }
+  .kpi-s-val { font-size: 18px; }
+
+  .kpi-row-2, .kpi-row-3 { grid-template-columns: 1fr 1fr !important; }
+  .admin-sidebar { display: flex; overflow-x: auto; gap: 4px; }
+  .admin-nav-item { white-space: nowrap; flex-shrink: 0; }
+
+  .dtbl th, .dtbl td { padding: 5px 6px; font-size: 11px; }
+  .modal-box { padding: 18px; }
+  .form-grid2 { grid-template-columns: 1fr !important; }
+}

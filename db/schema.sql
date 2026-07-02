@@ -22,9 +22,11 @@ CREATE TABLE IF NOT EXISTS sheet_rows (
   id BIGSERIAL PRIMARY KEY,
   sheet_name TEXT NOT NULL,
   row_data JSONB NOT NULL,
+  entry_date DATE,
   created_at TIMESTAMPTZ DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_sheet_rows_sheet ON sheet_rows (sheet_name, id);
+CREATE INDEX IF NOT EXISTS idx_sheet_rows_sheet_date ON sheet_rows (sheet_name, entry_date);
 
 -- Audit log
 CREATE TABLE IF NOT EXISTS audit_log (

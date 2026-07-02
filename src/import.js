@@ -74,6 +74,7 @@ async function importIntoSheet(sheetName, uploadedHeaders, uploadedRows, mode = 
     await db.query('DELETE FROM sheet_rows WHERE sheet_name = $1', [sheetName]);
   }
 
+  const dateIdx = canonical.findIndex(h => String(h).trim().toLowerCase() === 'date');
   let inserted = 0;
   for (const row of uploadedRows) {
     const mappedRow = mapping.map(idx => {
@@ -82,9 +83,15 @@ async function importIntoSheet(sheetName, uploadedHeaders, uploadedRows, mode = 
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
       return v === undefined || v === null ? '' : v;
     });
-    await db.query('INSERT INTO sheet_rows (sheet_name, row_data) VALUES ($1, $2)', [sheetName, JSON.stringify(mappedRow)]);
+    const entryDate = dateIdx >= 0 ? db.parseDateValue(mappedRow[dateIdx]) : null;
+    if (dateIdx >= 0 && entryDate) mappedRow[dateIdx] = entryDate;
+    await db.query(
+      'INSERT INTO sheet_rows (sheet_name, row_data, entry_date) VALUES ($1, $2, $3)',
+      [sheetName, JSON.stringify(mappedRow), entryDate]
+    );
     inserted++;
   }
+  db.invalidateHeaderCache(sheetName);
 
   return { matchedColumns: matchedCount, totalColumns: canonical.length, rowsInserted: inserted };
 }

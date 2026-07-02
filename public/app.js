@@ -141,11 +141,17 @@ async function doLogin() {
   // Set today
   const today = new Date().toISOString().slice(0, 10);
   const thisMonth = today.slice(0, 7);
+  const weekAgo = new Date(Date.now() - 6 * 86400000).toISOString().slice(0, 10);
   STATE.filterDate  = today;
   STATE.filterMonth = thisMonth;
   document.getElementById('dash-date').value  = today;
+  document.getElementById('dash-month').value = thisMonth;
+  document.getElementById('dash-from').value  = weekAgo;
+  document.getElementById('dash-to').value    = today;
   document.getElementById('det-date').value   = today;
   document.getElementById('ent-date').value   = today;
+  document.getElementById('al-date').value    = today;
+  document.getElementById('al-month').value   = thisMonth;
   document.getElementById('report-month').value = thisMonth;
 
   populateEntrySheets();
@@ -192,37 +198,155 @@ function showPage(name) {
   });
 
   if (name === 'dashboard') loadDashboard();
+  else if (name === 'alerts') loadAlerts();
   else if (name === 'targets') loadTargets();
   else if (name === 'report') { /* wait for user to click Generate */ }
   else if (name === 'admin') initAdmin();
+}
+
+// ─── ALERTS PAGE ──────────────────────────────────────────────────────────────
+
+function alSetMode(mode) {
+  STATE.alertMode = mode;
+  document.getElementById('al-vbtn-date').classList.toggle('active', mode === 'date');
+  document.getElementById('al-vbtn-month').classList.toggle('active', mode === 'month');
+  document.getElementById('al-date').style.display  = mode === 'date'  ? '' : 'none';
+  document.getElementById('al-month').style.display = mode === 'month' ? '' : 'none';
+}
+
+async function loadAlerts() {
+  const content = document.getElementById('alerts-content');
+  const summary = document.getElementById('alerts-summary');
+  content.innerHTML = skeletonCards(2);
+
+  const payload = {};
+  if ((STATE.alertMode || 'date') === 'month') {
+    payload.month = document.getElementById('al-month').value || STATE.filterMonth;
+  } else {
+    payload.date = document.getElementById('al-date').value || STATE.filterDate;
+  }
+
+  const data = await api('alerts', payload);
+  if (!data || data.error) {
+    summary.innerHTML = '';
+    content.innerHTML = `<div class="nodata">${data ? data.error : 'Error loading alerts'}</div>`;
+    return;
+  }
+
+  summary.innerHTML = `
+    <div class="kpi-s-tile ${data.critical ? 'crit' : ''}">
+      <div class="kpi-s-val">${data.critical}</div><div class="kpi-s-label">Critical</div>
+    </div>
+    <div class="kpi-s-tile ${data.warning ? 'warn' : ''}">
+      <div class="kpi-s-val">${data.warning}</div><div class="kpi-s-label">Warning</div>
+    </div>
+    <div class="kpi-s-tile">
+      <div class="kpi-s-val">${data.total}</div><div class="kpi-s-label">Total · ${data.date || ''}</div>
+    </div>`;
+
+  if (!data.alerts.length) {
+    content.innerHTML = '<div class="nodata" style="color:var(--ok)">✔ No critical or warning readings in this period.</div>';
+    return;
+  }
+
+  const limitStr = (l) => {
+    if (!l) return '';
+    const parts = [];
+    if (l.min !== null && !isNaN(l.min)) parts.push(`min ${l.min}`);
+    if (l.max !== null && !isNaN(l.max)) parts.push(`max ${l.max}`);
+    return parts.join(' / ');
+  };
+
+  content.innerHTML = `
+    <div class="tbl-wrap"><table class="dtbl">
+      <thead><tr><th>Status</th><th>Date</th><th>Time/Shift</th><th>Section</th><th>Parameter</th><th>Value</th><th>Allowed</th></tr></thead>
+      <tbody>${data.alerts.map(a => `<tr>
+        <td>${pillHtml(a.status)}</td>
+        <td>${a.date || ''}</td>
+        <td>${a.time || ''}</td>
+        <td class="td-label"><a href="#" onclick="openSection('${a.sectionKey}');return false" style="color:var(--maroon)">${a.section}</a></td>
+        <td>${a.param}</td>
+        <td class="td-${statusClass(a.status)}">${fmt(a.value)} ${a.unit}</td>
+        <td style="color:var(--txt3);font-size:11px">${limitStr(a.limit)}</td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+}
+
+// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+
+function exportSection() {
+  if (!STATE.currentSec) { showToast('Open a section first', 'error'); return; }
+  const params = new URLSearchParams({ token: STATE.token, section: STATE.currentSec });
+  Object.entries(detFilterPayload()).forEach(([k, v]) => { if (v) params.set(k, v); });
+  window.location.href = '/api/export/section?' + params.toString();
+}
+
+function exportReport() {
+  const month = document.getElementById('report-month').value;
+  if (!month) { showToast('Select a month first', 'error'); return; }
+  const params = new URLSearchParams({ token: STATE.token, month });
+  window.location.href = '/api/export/report?' + params.toString();
 }
 
 // ─── DASHBOARD ────────────────────────────────────────────────────────────────
 
 function setViewMode(mode) {
   STATE.filterMode = mode;
-  document.getElementById('vbtn-date').classList.toggle('active', mode === 'date');
-  document.getElementById('vbtn-month').classList.toggle('active', mode === 'month');
-  document.getElementById('dash-date').style.display  = mode === 'date'  ? '' : 'none';
-  document.getElementById('dash-month').style.display = mode === 'month' ? '' : 'none';
+  ['date', 'month', 'range'].forEach(m => {
+    const btn = document.getElementById('vbtn-' + m);
+    if (btn) btn.classList.toggle('active', mode === m);
+  });
+  document.getElementById('dash-date').style.display       = mode === 'date'  ? '' : 'none';
+  document.getElementById('dash-month').style.display      = mode === 'month' ? '' : 'none';
+  document.getElementById('dash-range-wrap').style.display = mode === 'range' ? 'inline-flex' : 'none';
+}
+
+function dashFilterPayload() {
+  const mode = STATE.filterMode;
+  if (mode === 'month') return { month: document.getElementById('dash-month').value || STATE.filterMonth };
+  if (mode === 'range') {
+    return {
+      from: document.getElementById('dash-from').value || null,
+      to:   document.getElementById('dash-to').value   || null,
+    };
+  }
+  return { date: document.getElementById('dash-date').value || STATE.filterDate };
+}
+
+function skeletonCards(n) {
+  return Array.from({ length: n }, () => `
+    <div class="skel-card">
+      <div class="skel-line" style="width:55%"></div>
+      <div class="skel-line" style="width:35%;height:10px"></div>
+      <div class="skel-line" style="width:80%;height:10px"></div>
+      <div class="skel-line" style="width:70%;height:10px"></div>
+    </div>`).join('');
+}
+
+function renderKpiStrip(kpis) {
+  const wrap = document.getElementById('dash-kpis');
+  if (!kpis || !kpis.length) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = kpis.map(k => {
+    const cls = k.status === 'CRITICAL' ? 'crit' : k.status === 'WARNING' ? 'warn' : '';
+    return `<div class="kpi-s-tile ${cls}">
+      <div class="kpi-s-val">${fmt(k.value, k.unit === 'g' || k.unit === 't' || k.unit === 'hrs' ? 1 : 0)}</div>
+      <div class="kpi-s-label">${k.label}</div>
+      <div class="kpi-s-unit">${k.unit || ''}</div>
+    </div>`;
+  }).join('');
 }
 
 async function loadDashboard() {
   const grid = document.getElementById('dash-grid');
-  grid.innerHTML = '<div class="loading"><div class="spinner"></div>Loading…</div>';
+  grid.innerHTML = skeletonCards(6);
+  document.getElementById('dash-kpis').innerHTML =
+    '<div class="kpi-s-tile"><div class="skel-line" style="width:60%"></div><div class="skel-line" style="width:80%;height:9px"></div></div>'.repeat(4);
 
-  const mode = STATE.filterMode;
-  const payload = {};
-  if (mode === 'date') {
-    payload.date = document.getElementById('dash-date').value || STATE.filterDate;
-  } else {
-    payload.month = document.getElementById('dash-month').value || STATE.filterMonth;
-  }
-
-  const data = await api('dashboard', payload);
+  const data = await api('dashboard', dashFilterPayload());
   if (!data) return;
 
   document.getElementById('dash-info').textContent = data.date ? 'Showing: ' + data.date : '';
+  renderKpiStrip(data.kpis);
 
   const sections = data.sections || {};
   const keys = Object.keys(sections);
@@ -273,6 +397,8 @@ function openSection(key) {
   STATE.detailMode  = STATE.filterMode;
   document.getElementById('det-date').value  = document.getElementById('dash-date').value  || STATE.filterDate;
   document.getElementById('det-month').value = document.getElementById('dash-month').value || STATE.filterMonth || '';
+  document.getElementById('det-from').value  = document.getElementById('dash-from').value  || '';
+  document.getElementById('det-to').value    = document.getElementById('dash-to').value    || '';
   detSetMode(STATE.detailMode);
   showPage('detail');
   loadDetail();
@@ -280,26 +406,37 @@ function openSection(key) {
 
 function detSetMode(mode) {
   STATE.detailMode = mode;
-  document.getElementById('det-vbtn-date').classList.toggle('active', mode === 'date');
-  document.getElementById('det-vbtn-month').classList.toggle('active', mode === 'month');
-  document.getElementById('det-date').style.display  = mode === 'date'  ? '' : 'none';
-  document.getElementById('det-month').style.display = mode === 'month' ? '' : 'none';
+  ['date', 'month', 'range'].forEach(m => {
+    const btn = document.getElementById('det-vbtn-' + m);
+    if (btn) btn.classList.toggle('active', mode === m);
+  });
+  document.getElementById('det-date').style.display        = mode === 'date'  ? '' : 'none';
+  document.getElementById('det-month').style.display       = mode === 'month' ? '' : 'none';
+  document.getElementById('det-range-wrap').style.display  = mode === 'range' ? 'inline-flex' : 'none';
+}
+
+function detFilterPayload() {
+  if (STATE.detailMode === 'month') return { month: document.getElementById('det-month').value };
+  if (STATE.detailMode === 'range') {
+    return {
+      from: document.getElementById('det-from').value || null,
+      to:   document.getElementById('det-to').value   || null,
+    };
+  }
+  return { date: document.getElementById('det-date').value };
 }
 
 async function loadDetail() {
   const content = document.getElementById('det-content');
-  content.innerHTML = '<div class="loading"><div class="spinner"></div>Loading…</div>';
+  content.innerHTML = `
+    <div class="skel-card" style="height:90px"><div class="skel-line" style="width:40%"></div><div class="skel-line" style="width:65%"></div></div>
+    <div class="skel-card" style="height:220px;margin-top:14px"><div class="skel-line" style="width:30%"></div><div class="skel-line" style="width:90%;height:140px"></div></div>`;
 
   // Destroy old charts
   Object.values(STATE.charts).forEach(c => { try { c && c.destroy && c.destroy(); } catch (e) {} });
   STATE.charts = {};
 
-  const payload = { section: STATE.currentSec };
-  if (STATE.detailMode === 'date') {
-    payload.date = document.getElementById('det-date').value;
-  } else {
-    payload.month = document.getElementById('det-month').value;
-  }
+  const payload = { section: STATE.currentSec, ...detFilterPayload() };
 
   const data = await api('section', payload);
   if (!data || data.error) {
@@ -308,7 +445,9 @@ async function loadDetail() {
   }
 
   document.getElementById('det-title').textContent = data.label;
-  document.getElementById('det-sub').textContent   = (STATE.detailMode === 'date' ? 'Date: ' : 'Month: ') + (data.date || '');
+  const modeLbl = STATE.detailMode === 'date' ? 'Date: ' : STATE.detailMode === 'month' ? 'Month: ' : 'Range: ';
+  document.getElementById('det-sub').textContent   = modeLbl + (data.date || '');
+  STATE.lastSectionData = data;
 
   if (!data.hasData) {
     content.innerHTML = '<div class="nodata">No data for this period.</div>';
@@ -464,7 +603,7 @@ function renderLeachingHeatmap(data, param) {
   const rows = data.rows || [];
   if (!rows.length) return '<div class="nodata">No data</div>';
 
-  const showRows = STATE.detailMode === 'month' ? rows.slice(-14) : rows;
+  const showRows = STATE.detailMode !== 'date' ? rows.slice(-14) : rows;
   const timeLabels = showRows.map(r => r.__time || r.__date || '');
 
   let html = `<div class="leach-heatmap"><table class="heatmap-table">
@@ -667,6 +806,33 @@ function genericTableHtml(data) {
 
 // ─── CHART BUILDER ────────────────────────────────────────────────────────────
 
+/**
+ * Builds flat-line datasets that draw a limit band on a chart:
+ * dashed red min/max lines with a light green fill for the acceptable zone.
+ * lim: { min, max, warnMin, warnMax } (nulls skipped). Band lines are
+ * excluded from the legend and tooltips.
+ */
+function limitBandDatasets(lim, labels, yAxisID) {
+  if (!lim) return [];
+  const flat = v => labels.map(() => v);
+  const ds = [];
+  const has = v => v !== null && v !== undefined && !isNaN(v);
+  const line = (v, color, dash, fill) => ({
+    label: '__band__', data: flat(v), borderColor: color, borderWidth: 1.5,
+    borderDash: dash, pointRadius: 0, pointHitRadius: 0, fill: fill || false,
+    type: 'line', yAxisID: yAxisID || 'y', order: 100,
+  });
+  if (has(lim.max)) ds.push(line(lim.max, 'rgba(185,28,28,.55)', [6, 4]));
+  if (has(lim.min)) {
+    const minLine = line(lim.min, 'rgba(185,28,28,.55)', [6, 4]);
+    if (has(lim.max)) { minLine.fill = '-1'; minLine.backgroundColor = 'rgba(26,122,74,.07)'; }
+    ds.push(minLine);
+  }
+  if (has(lim.warnMax)) ds.push(line(lim.warnMax, 'rgba(180,83,9,.45)', [2, 3]));
+  if (has(lim.warnMin)) ds.push(line(lim.warnMin, 'rgba(180,83,9,.45)', [2, 3]));
+  return ds;
+}
+
 function buildChart(canvasId, labels, datasets, scales = {}) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
@@ -681,7 +847,11 @@ function buildChart(canvasId, labels, datasets, scales = {}) {
     options: {
       responsive: true, maintainAspectRatio: false,
       plugins: {
-        legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } },
+        legend: {
+          display: true, position: 'bottom',
+          labels: { boxWidth: 12, font: { size: 10 }, filter: item => item.text !== '__band__' },
+        },
+        tooltip: { filter: item => item.dataset.label !== '__band__' },
       },
       scales: {
         x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
@@ -701,8 +871,8 @@ function buildChart(canvasId, labels, datasets, scales = {}) {
 
 function buildSectionCharts(data) {
   const key   = data.section;
-  const isMonth = STATE.detailMode === 'month';
-  const rows  = isMonth ? (data.dailyRows || []) : data.rows;
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+  const rows  = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
   if (!rows.length) return;
 
   window._leachData = data; // store for param switching
@@ -730,9 +900,11 @@ function buildSectionCharts(data) {
   if (key === 'leaching') {
     const nacnVals = rows.map(r => { const v = parseFloat(r['LT9 NaCN (ppm)']); return isNaN(v) ? null : v; });
     const auVals   = rows.map(r => { const v = parseFloat(r['LT9 Au in Liquor (ppm)']); return isNaN(v) ? null : v; });
+    const auLim = (data.limits || {})['LT_AU_LT9'];
     buildChart('chart-leach-main', labels, [
       { label: 'LT9 NaCN (ppm)', data: nacnVals, borderColor: '#1A7A4A', fill: false, tension: .3, pointRadius: 3 },
       { label: 'LT9 Au (ppm)',   data: auVals,   borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 3, yAxisID: 'y2' },
+      ...limitBandDatasets(auLim, labels, 'y2'),
     ], { y2: { title: { display: true, text: 'Au ppm' } } });
   }
 

@@ -55,29 +55,60 @@ function _getYearMonth(dateStr) {
 // ─── RAW ROW FETCHER ──────────────────────────────────────────────────────────
 
 /**
- * Fetches rows from a sheet, optionally filtering by date or month.
- * Returns array of raw row arrays.
+ * Normalizes a request payload into a date filter object.
+ * Supports single date, month, or from/to range.
  */
-async function _getRows(sheetName, date, month, sheets) {
+function _filterFromPayload(payload) {
+  const { date, month, from, to } = payload || {};
+  if (from || to) return { from: from || null, to: to || null };
+  if (date)  return { date };
+  if (month) return { month };
+  return {};
+}
+
+function _filterLabel(filter) {
+  if (filter.date)  return filter.date;
+  if (filter.month) return filter.month;
+  if (filter.from || filter.to) return `${filter.from || '…'} → ${filter.to || '…'}`;
+  return '';
+}
+
+/**
+ * Fetches rows from a sheet with the date filter applied in SQL (indexed),
+ * falling back to in-JS filtering for clients without getSheetByDate.
+ */
+async function _getRows(sheetName, filter, sheets) {
+  if (typeof sheets.getSheetByDate === 'function') {
+    return sheets.getSheetByDate(sheetName, filter || {});
+  }
   const rows = await sheets.getSheet(sheetName);
+  const { date, month, from, to } = filter || {};
+  if (!date && !month && !from && !to) return rows;
   const headers = await sheets.getSheetHeaders(sheetName);
   const colMap = buildColMap(headers);
   const dateIdx = findColIndex(colMap, 'Date');
-  if (!date && !month) return rows;
   return rows.filter(row => {
     const d = dateIdx >= 0 ? _toIsoDate(row[dateIdx]) : '';
-    if (date) return d === date;
+    if (date)  return d === date;
     if (month) return d.startsWith(month);
+    if (from && d < from) return false;
+    if (to && d > to) return false;
     return true;
   });
 }
 
 // ─── LIMITS ───────────────────────────────────────────────────────────────────
 
+// Limits change rarely; cache briefly so a dashboard load doesn't refetch them
+// for every section. Invalidated on updateLimit.
+let _limitsCache = null; // { map, ts }
+const LIMITS_TTL_MS = 60 * 1000;
+
 /**
  * Returns a map: limitId → { min, max, warnMin, warnMax, unit }
  */
 async function getLimitsMap(sheets) {
+  if (_limitsCache && Date.now() - _limitsCache.ts < LIMITS_TTL_MS) return _limitsCache.map;
   const rows = await sheets.getSheet(SH.LIMITS);
   const headers = await sheets.getSheetHeaders(SH.LIMITS);
   const colMap = buildColMap(headers);
@@ -105,6 +136,7 @@ async function getLimitsMap(sheets) {
       unit:    unitIdx >= 0   ? String(row[unitIdx] || '').trim() : '',
     };
   });
+  _limitsCache = { map, ts: Date.now() };
   return map;
 }
 
@@ -225,8 +257,8 @@ function _annotateRow(rowObj, params, limitsMap, targetsMap) {
 
 // ─── STOPPAGES ────────────────────────────────────────────────────────────────
 
-async function _getStoppages(date, month, sectionLabel, sheets) {
-  const rows = await _getRows(SH.STOPPAGE, date, month, sheets);
+async function _getStoppages(filter, sectionLabel, sheets) {
+  const rows = await _getRows(SH.STOPPAGE, filter, sheets);
   const headers = await sheets.getSheetHeaders(SH.STOPPAGE);
   const colMap = buildColMap(headers);
   const dateIdx   = findColIndex(colMap, 'Date');
@@ -258,10 +290,10 @@ async function _getStoppages(date, month, sectionLabel, sheets) {
 
 // ─── CHEMICAL STATUS FOR SECTION ─────────────────────────────────────────────
 
-async function _getSectionChemStatus(sectionKey, date, month, sheets) {
+async function _getSectionChemStatus(sectionKey, filter, sheets) {
   const chems = SECTION_CHEMICALS[sectionKey] || [];
   if (!chems.length) return [];
-  const rows = await _getRows(SH.CHEMICAL, date, month, sheets);
+  const rows = await _getRows(SH.CHEMICAL, filter, sheets);
   const headers = await sheets.getSheetHeaders(SH.CHEMICAL);
   const colMap = buildColMap(headers);
 
@@ -298,9 +330,11 @@ function _getDailyAggregates(rows, headers, numericKeys) {
 
 // ─── SECTION DATA ROW BUILDER ────────────────────────────────────────────────
 
-async function _buildSectionRows(sheetName, params, date, month, limitsMap, sheets) {
-  const rawRows = await _getRows(sheetName, date, month, sheets);
-  const headers = await sheets.getSheetHeaders(sheetName);
+async function _buildSectionRows(sheetName, params, filter, limitsMap, sheets) {
+  const [rawRows, headers] = await Promise.all([
+    _getRows(sheetName, filter, sheets),
+    sheets.getSheetHeaders(sheetName),
+  ]);
   const colMap = buildColMap(headers);
   const dateIdx  = findColIndex(colMap, 'Date');
   const timeIdx  = findColIndex(colMap, 'Time');
@@ -330,28 +364,23 @@ async function _buildSectionRows(sheetName, params, date, month, limitsMap, shee
 // ─── DASHBOARD (INDEX DATA) ───────────────────────────────────────────────────
 
 async function getIndexData(payload, sheets) {
-  const { token, date, month } = payload;
-  const sess = validateSession(token);
+  const sess = validateSession(payload.token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
 
+  const filter = _filterFromPayload(payload);
   const limitsMap = await getLimitsMap(sheets).catch(() => ({}));
-  const filterDate  = date  || null;
-  const filterMonth = month || null;
-  const displayDate = filterDate || filterMonth || '';
 
-  const sectionResults = {};
+  const visible = Object.entries(SECTIONS).filter(([key]) => canSeeSection(sess.role, key));
 
-  for (const [key, secCfg] of Object.entries(SECTIONS)) {
-    if (!canSeeSection(sess.role, key)) continue;
+  // All sections load in parallel — one slow sheet no longer serializes the rest.
+  const results = await Promise.all(visible.map(async ([key, secCfg]) => {
     try {
       const params = SHEET_PARAMS[secCfg.sheet] || [];
       const numParams = params.filter(p => !p.isText && !p.isTime && !p.isSelect && !p.autoCalc);
-      const rows = await _buildSectionRows(secCfg.sheet, params, filterDate, filterMonth, limitsMap, sheets);
+      const rows = await _buildSectionRows(secCfg.sheet, params, filter, limitsMap, sheets);
 
-      const hasData = rows.length > 0;
       const allStatuses = [];
       const flagged = [];
-
       rows.forEach(row => {
         numParams.forEach(p => {
           const s = row[p.key + '__status'];
@@ -368,27 +397,47 @@ async function getIndexData(payload, sheets) {
         });
       });
 
-      sectionResults[key] = {
-        key,
-        label:   secCfg.label,
-        color:   secCfg.color,
-        hasData,
+      return [key, {
+        key, label: secCfg.label, color: secCfg.color,
+        hasData: rows.length > 0,
         status:  _worstStatus(allStatuses.length ? allStatuses : ['NO_DATA']),
         flagged: flagged.sort((a, b) => (b.status === 'CRITICAL' ? 1 : 0) - (a.status === 'CRITICAL' ? 1 : 0)),
-      };
+        _rows: rows,
+      }];
     } catch (err) {
       console.error(`Dashboard section ${key} error:`, err.message);
-      sectionResults[key] = { key, label: secCfg.label, color: secCfg.color, hasData: false, status: 'NO_DATA', flagged: [] };
+      return [key, { key, label: secCfg.label, color: secCfg.color, hasData: false, status: 'NO_DATA', flagged: [], _rows: [] }];
     }
-  }
+  }));
 
-  return { date: displayDate, sections: sectionResults };
+  // ── KPI strip: computed from the rows already fetched above ──
+  const byKey = Object.fromEntries(results);
+  const sumCol = (rows, col) => (rows || []).reduce((s, r) => s + (parseFloat(r[col]) || 0), 0);
+
+  const kpis = [];
+  if (byKey.crushing) kpis.push({ key: 'crushProd', label: 'Crushing Production', value: +sumCol(byKey.crushing._rows, 'Production').toFixed(1), unit: 't' });
+  if (byKey.milling)  kpis.push({ key: 'millProd',  label: 'Milling Production',  value: +sumCol(byKey.milling._rows, 'Production').toFixed(1), unit: 't' });
+  if (byKey.gold)     kpis.push({ key: 'goldAu',    label: 'Gold Produced',       value: +sumCol(byKey.gold._rows, 'Au Content (g)').toFixed(1), unit: 'g' });
+
+  try {
+    const stoppages = await _getStoppages(filter, null, sheets);
+    kpis.push({ key: 'stopHrs', label: 'Stoppage Hours', value: +stoppages.reduce((s, x) => s + x.hrs, 0).toFixed(1), unit: 'hrs' });
+  } catch (e) { /* stoppage sheet unavailable — omit tile */ }
+
+  const critCount = results.filter(([, sec]) => sec.status === 'CRITICAL').length;
+  const warnCount = results.filter(([, sec]) => sec.status === 'WARNING').length;
+  kpis.push({ key: 'alerts', label: 'Sections Flagged', value: critCount + warnCount, unit: critCount > 0 ? `${critCount} critical` : '', status: critCount > 0 ? 'CRITICAL' : warnCount > 0 ? 'WARNING' : 'NORMAL' });
+
+  const sectionResults = {};
+  results.forEach(([key, sec]) => { delete sec._rows; sectionResults[key] = sec; });
+
+  return { date: _filterLabel(filter), sections: sectionResults, kpis };
 }
 
 // ─── SECTION DETAIL DATA ──────────────────────────────────────────────────────
 
 async function getSectionData(payload, sheets) {
-  const { token, section, date, month } = payload;
+  const { token, section } = payload;
   const sess = validateSession(token);
   if (!sess) return { error: 'SESSION_EXPIRED' };
   if (!canSeeSection(sess.role, section)) return { error: 'Access denied.' };
@@ -396,20 +445,28 @@ async function getSectionData(payload, sheets) {
   const secCfg = SECTIONS[section];
   if (!secCfg) return { error: 'Unknown section.' };
 
+  const filter = _filterFromPayload(payload);
   const limitsMap = await getLimitsMap(sheets).catch(() => ({}));
-  const filterDate  = date  || null;
-  const filterMonth = month || null;
   const params = SHEET_PARAMS[secCfg.sheet] || [];
 
-  const rows = await _buildSectionRows(secCfg.sheet, params, filterDate, filterMonth, limitsMap, sheets);
+  const [rows, stoppages, chemicals] = await Promise.all([
+    _buildSectionRows(secCfg.sheet, params, filter, limitsMap, sheets),
+    _getStoppages(filter, secCfg.label, sheets).catch(() => []),
+    _getSectionChemStatus(section, filter, sheets).catch(() => []),
+  ]);
   const hasData = rows.length > 0;
 
-  const stoppages = await _getStoppages(filterDate, filterMonth, secCfg.label, sheets).catch(() => []);
-  const chemicals = await _getSectionChemStatus(section, filterDate, filterMonth, sheets).catch(() => []);
+  // Ship the limits referenced by this section's params so the client can
+  // draw min/max bands on charts.
+  const limits = {};
+  params.forEach(p => {
+    if (p.limitId && limitsMap[p.limitId]) limits[p.limitId] = limitsMap[p.limitId];
+  });
 
-  // For monthly view, compute per-day aggregate rows for charts
+  // For monthly/range view, compute per-day aggregate rows for charts
+  const isAggregate = !!(filter.month || filter.from || filter.to);
   let dailyRows = [];
-  if (filterMonth && rows.length > 0) {
+  if (isAggregate && rows.length > 0) {
     const byDate = {};
     rows.forEach(r => {
       const d = r.__date;
@@ -429,8 +486,65 @@ async function getSectionData(payload, sheets) {
 
   return {
     section, label: secCfg.label, color: secCfg.color,
-    date: filterDate || filterMonth,
-    hasData, rows, dailyRows, params, stoppages, chemicals,
+    date: _filterLabel(filter),
+    isAggregate,
+    hasData, rows, dailyRows, params, stoppages, chemicals, limits,
+  };
+}
+
+// ─── ALERTS ───────────────────────────────────────────────────────────────────
+
+/**
+ * Returns every critical/warning reading across all visible sections for the
+ * requested period: [{ date, time, section, sectionKey, param, value, unit, status }]
+ */
+async function getAlerts(payload, sheets) {
+  const sess = validateSession(payload.token);
+  if (!sess) return { error: 'SESSION_EXPIRED' };
+
+  const filter = _filterFromPayload(payload);
+  const limitsMap = await getLimitsMap(sheets).catch(() => ({}));
+  const visible = Object.entries(SECTIONS).filter(([key]) => canSeeSection(sess.role, key));
+
+  const perSection = await Promise.all(visible.map(async ([key, secCfg]) => {
+    try {
+      const params = SHEET_PARAMS[secCfg.sheet] || [];
+      const flaggable = params.filter(p => p.limitId || p.isOverflow);
+      if (!flaggable.length) return [];
+      const rows = await _buildSectionRows(secCfg.sheet, params, filter, limitsMap, sheets);
+      const alerts = [];
+      rows.forEach(row => {
+        flaggable.forEach(p => {
+          const s = row[p.key + '__status'];
+          if (s !== 'CRITICAL' && s !== 'WARNING') return;
+          const lim = p.limitId ? limitsMap[p.limitId] : null;
+          alerts.push({
+            date: row.__date, time: row.__time || row.__shift || '',
+            section: secCfg.label, sectionKey: key,
+            param: p.key, value: row[p.key], unit: p.unit || '',
+            status: s,
+            limit: lim ? { min: lim.min, max: lim.max, warnMin: lim.warnMin, warnMax: lim.warnMax } : null,
+          });
+        });
+      });
+      return alerts;
+    } catch (err) {
+      console.error(`Alerts section ${key} error:`, err.message);
+      return [];
+    }
+  }));
+
+  const alerts = perSection.flat().sort((a, b) => {
+    if (a.status !== b.status) return a.status === 'CRITICAL' ? -1 : 1;
+    return String(b.date).localeCompare(String(a.date)) || String(b.time).localeCompare(String(a.time));
+  });
+
+  return {
+    date: _filterLabel(filter),
+    total: alerts.length,
+    critical: alerts.filter(a => a.status === 'CRITICAL').length,
+    warning: alerts.filter(a => a.status === 'WARNING').length,
+    alerts,
   };
 }
 
@@ -540,6 +654,7 @@ async function updateLimit(payload, token, sheets) {
   const { rowNum, row } = payload;
   if (!rowNum || !row) return { error: 'Missing rowNum or row data.' };
   await sheets.updateRow(SH.LIMITS, rowNum, row);
+  _limitsCache = null;
   return { success: true };
 }
 
@@ -641,11 +756,20 @@ async function getMonthlyReport(payload, sheets) {
   if (!month) return { error: 'Month is required.' };
 
   const result = { month };
+  const filter = { month };
+
+  // All four report blocks fetch independently — run them in parallel.
+  const [crushBlock, millBlock, chemBlock, stopBlock] = await Promise.allSettled([
+    Promise.all([_getRows(SH.CRUSHING, filter, sheets), sheets.getSheetHeaders(SH.CRUSHING)]),
+    Promise.all([_getRows(SH.MILLING,  filter, sheets), sheets.getSheetHeaders(SH.MILLING)]),
+    Promise.all([_getRows(SH.CHEMICAL, filter, sheets), sheets.getSheetHeaders(SH.CHEMICAL)]),
+    Promise.all([_getRows(SH.STOPPAGE, filter, sheets), sheets.getSheetHeaders(SH.STOPPAGE)]),
+  ]);
 
   // Crushing
   try {
-    const crushRows = await _getRows(SH.CRUSHING, null, month, sheets);
-    const crushHeaders = await sheets.getSheetHeaders(SH.CRUSHING);
+    if (crushBlock.status !== 'fulfilled') throw new Error(crushBlock.reason);
+    const [crushRows, crushHeaders] = crushBlock.value;
     const crushColMap = buildColMap(crushHeaders);
     const runHrsIdx = findColIndex(crushColMap, 'Running Hours');
     const prodIdx   = findColIndex(crushColMap, 'Production');
@@ -656,8 +780,8 @@ async function getMonthlyReport(payload, sheets) {
 
   // Milling
   try {
-    const millRows = await _getRows(SH.MILLING, null, month, sheets);
-    const millHeaders = await sheets.getSheetHeaders(SH.MILLING);
+    if (millBlock.status !== 'fulfilled') throw new Error(millBlock.reason);
+    const [millRows, millHeaders] = millBlock.value;
     const millColMap = buildColMap(millHeaders);
     const runHrsIdx  = findColIndex(millColMap, 'Running Hrs');
     const prodIdx    = findColIndex(millColMap, 'Production');
@@ -673,8 +797,8 @@ async function getMonthlyReport(payload, sheets) {
 
   // Chemicals
   try {
-    const chemRows = await _getRows(SH.CHEMICAL, null, month, sheets);
-    const chemHeaders = await sheets.getSheetHeaders(SH.CHEMICAL);
+    if (chemBlock.status !== 'fulfilled') throw new Error(chemBlock.reason);
+    const [chemRows, chemHeaders] = chemBlock.value;
     const chemColMap = buildColMap(chemHeaders);
     const chemNames = [
       'Fresh Carbon','Hydrated Lime','Sodium Hypochlorite','Calcium Hypochlorite',
@@ -691,8 +815,8 @@ async function getMonthlyReport(payload, sheets) {
 
   // Stoppages
   try {
-    const stopRows = await _getRows(SH.STOPPAGE, null, month, sheets);
-    const stopHeaders = await sheets.getSheetHeaders(SH.STOPPAGE);
+    if (stopBlock.status !== 'fulfilled') throw new Error(stopBlock.reason);
+    const [stopRows, stopHeaders] = stopBlock.value;
     const stopColMap = buildColMap(stopHeaders);
     const secIdx    = findColIndex(stopColMap, 'Section');
     const deptIdx   = findColIndex(stopColMap, 'Department');
@@ -724,7 +848,7 @@ async function getMonthlyReport(payload, sheets) {
 module.exports = {
   getLimitsMap, getTargetsMap, getStatus, getOverflowStatus,
   getIndexData, getSectionData, getEntryFormConfig, submitData,
-  getMonthlyReport,
+  getMonthlyReport, getAlerts,
   getAllLimits, updateLimit,
   getAllTargets, saveTarget,
   getChemicalInventory, updateChemInventory,

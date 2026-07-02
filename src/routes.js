@@ -7,6 +7,7 @@ const sheets  = require('./db');
 const auth    = require('./auth');
 const data    = require('./data');
 const importer = require('./import');
+const exporter = require('./export');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -37,6 +38,43 @@ router.post('/section',        handle((body) => data.getSectionData(body, sheets
 router.post('/entry-config',   handle((body) => data.getEntryFormConfig(body, sheets)));
 router.post('/submit',         handle((body) => data.submitData(body, sheets)));
 router.post('/report',         handle((body) => data.getMonthlyReport(body, sheets)));
+router.post('/alerts',         handle((body) => data.getAlerts(body, sheets)));
+
+// ─── EXCEL EXPORT ─────────────────────────────────────────────────────────────
+
+router.get('/export/section', async (req, res) => {
+  try {
+    const { token, section, date, month, from, to } = req.query;
+    const result = await data.getSectionData({ token, section, date, month, from, to }, sheets);
+    if (result.error) return res.status(result.error === 'SESSION_EXPIRED' ? 401 : 403).json(result);
+    if (!result.hasData) return res.status(404).json({ error: 'No data for this period.' });
+
+    const buf = exporter.sectionWorkbook(result);
+    const fname = `${result.label.replace(/[^a-zA-Z0-9]+/g, '_')}_${(result.date || 'all').replace(/[^0-9a-zA-Z-]+/g, '_')}.xlsx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="${fname}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('/export/section', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/export/report', async (req, res) => {
+  try {
+    const { token, month } = req.query;
+    const result = await data.getMonthlyReport({ token, month }, sheets);
+    if (result.error) return res.status(result.error === 'SESSION_EXPIRED' ? 401 : 403).json(result);
+
+    const buf = exporter.reportWorkbook(result);
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', `attachment; filename="Monthly_Report_${month}.xlsx"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('/export/report', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ─── LIMITS ROUTES ────────────────────────────────────────────────────────────
 
