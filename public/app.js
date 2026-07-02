@@ -1132,6 +1132,61 @@ function adminShowPanel(panel) {
   if (panel === 'users')    loadAdminUsers();
   if (panel === 'limits')   loadAdminLimits();
   if (panel === 'chem-inv') loadChemInventory();
+  if (panel === 'import')   loadImportSheets();
+}
+
+// ── Import Data ───────────────────────────────────────────────────────────────
+
+async function loadImportSheets() {
+  const sel = document.getElementById('import-sheet');
+  if (sel.options.length) return; // already loaded
+  try {
+    const res = await fetch(`/api/import/sheets?token=${encodeURIComponent(STATE.token)}`);
+    const data = await res.json();
+    if (data.error) { showToast(data.error); return; }
+    sel.innerHTML = data.sheets.map(s => `<option value="${s}">${s}</option>`).join('');
+  } catch (e) {
+    showToast('Failed to load sheet list.');
+  }
+}
+
+async function doImport() {
+  const msg = document.getElementById('import-msg');
+  const sheetName = document.getElementById('import-sheet').value;
+  const mode = document.getElementById('import-mode').value;
+  const fileInput = document.getElementById('import-file');
+  const file = fileInput.files[0];
+
+  if (!file) { msg.textContent = 'Please choose a file.'; msg.className = 'form-msg error'; msg.style.display = 'block'; return; }
+
+  msg.textContent = 'Uploading…';
+  msg.className = 'form-msg';
+  msg.style.display = 'block';
+
+  const formData = new FormData();
+  formData.append('file', file);
+  formData.append('sheetName', sheetName);
+  formData.append('mode', mode);
+  formData.append('token', STATE.token);
+
+  try {
+    const res = await fetch('/api/import', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) {
+      msg.textContent = data.error;
+      msg.className = 'form-msg error';
+      msg.style.display = 'block';
+      return;
+    }
+    msg.textContent = `Imported ${data.rowsInserted} rows (matched ${data.matchedColumns}/${data.totalColumns} columns).`;
+    msg.className = 'form-msg success';
+    msg.style.display = 'block';
+    fileInput.value = '';
+  } catch (e) {
+    msg.textContent = 'Upload failed: ' + e.message;
+    msg.className = 'form-msg error';
+    msg.style.display = 'block';
+  }
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

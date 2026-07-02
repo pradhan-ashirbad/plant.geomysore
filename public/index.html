@@ -178,6 +178,7 @@
         <button class="admin-nav-item active" onclick="adminShowPanel('users')">User Management</button>
         <button class="admin-nav-item" onclick="adminShowPanel('limits')">Limits Editor</button>
         <button class="admin-nav-item" onclick="adminShowPanel('chem-inv')">Chemical Inventory</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('import')">Import Data</button>
         <button class="admin-nav-item" onclick="adminShowPanel('password')">Change Password</button>
       </div>
       <div class="admin-content">
@@ -200,6 +201,34 @@
         <div id="admin-panel-chem-inv" style="display:none">
           <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Chemical Inventory</div>
           <div id="chem-inv-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+        </div>
+
+        <!-- Import Data panel -->
+        <div id="admin-panel-import" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Import Data from Excel</div>
+          <div class="form-card" style="max-width:480px">
+            <div class="form-row">
+              <label>Target Sheet</label>
+              <select id="import-sheet"></select>
+            </div>
+            <div class="form-row">
+              <label>Excel File (.xlsx, .xls, .csv)</label>
+              <input type="file" id="import-file" accept=".xlsx,.xls,.csv">
+            </div>
+            <div class="form-row">
+              <label>Mode</label>
+              <select id="import-mode">
+                <option value="append">Append (add to existing data)</option>
+                <option value="replace">Replace (clear sheet first)</option>
+              </select>
+            </div>
+            <div id="import-msg" class="form-msg"></div>
+            <button class="submit-btn" onclick="doImport()" style="margin-top:8px">Upload &amp; Import</button>
+          </div>
+          <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:480px">
+            The first row of your file should be column headers. Column names don't need to match exactly —
+            the importer matches them to the app's expected fields automatically.
+          </div>
         </div>
 
         <!-- Change Password panel -->
