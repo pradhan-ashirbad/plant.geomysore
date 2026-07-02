@@ -628,6 +628,121 @@ async function submitData(payload, sheets) {
   return { success: true };
 }
 
+// ─── PARAMETER CATALOG ────────────────────────────────────────────────────────
+// The app's config already defines every section and parameter, so admin
+// screens (targets, limits) offer dropdowns instead of hand-typed IDs.
+
+/**
+ * Returns the sections and their target-able parameters for dropdown UIs:
+ * { sections: [{ key, label, params: [{ key, unit }] }] }
+ */
+function getParamCatalog(payload) {
+  const sess = validateSession(payload.token);
+  if (!sess) return { error: 'SESSION_EXPIRED' };
+
+  const sections = Object.entries(SECTIONS).map(([key, secCfg]) => {
+    const params = (SHEET_PARAMS[secCfg.sheet] || [])
+      .filter(p => !p.isText && !p.isTime && !p.isSelect && !p.isOverflow)
+      .map(p => ({ key: p.key, unit: p.unit || '' }));
+    return { key, label: secCfg.label, params };
+  }).filter(s => s.params.length);
+
+  return { sections };
+}
+
+/**
+ * Returns every parameter that supports limits, joined with current limit
+ * values: [{ limitId, section, sectionKey, param, unit, min, max, warnMin, warnMax }]
+ * Legacy limit rows whose ID isn't referenced by any parameter are included
+ * under section 'Other' so nothing becomes invisible.
+ */
+async function getLimitCatalog(token, sheets) {
+  const sess = validateSession(token);
+  if (!sess) return { error: 'SESSION_EXPIRED' };
+  if (sess.role !== 'supervisor') return { error: 'Access denied.' };
+
+  const limitsMap = await getLimitsMap(sheets).catch(() => ({}));
+
+  const catalog = [];
+  const seen = new Set();
+  Object.entries(SECTIONS).forEach(([sectionKey, secCfg]) => {
+    (SHEET_PARAMS[secCfg.sheet] || []).forEach(p => {
+      if (!p.limitId || seen.has(p.limitId)) return;
+      seen.add(p.limitId);
+      const lim = limitsMap[p.limitId] || {};
+      catalog.push({
+        limitId: p.limitId,
+        section: secCfg.label, sectionKey,
+        param: p.key, unit: p.unit || lim.unit || '',
+        min: lim.min ?? null, max: lim.max ?? null,
+        warnMin: lim.warnMin ?? null, warnMax: lim.warnMax ?? null,
+        exists: !!limitsMap[p.limitId],
+      });
+    });
+  });
+
+  // Legacy/custom limit rows not referenced by any configured parameter
+  Object.values(limitsMap).forEach(lim => {
+    if (seen.has(lim.id)) return;
+    catalog.push({
+      limitId: lim.id, section: 'Other', sectionKey: 'other',
+      param: lim.label || lim.id, unit: lim.unit || '',
+      min: lim.min ?? null, max: lim.max ?? null,
+      warnMin: lim.warnMin ?? null, warnMax: lim.warnMax ?? null,
+      exists: true,
+    });
+  });
+
+  return { limits: catalog };
+}
+
+/**
+ * Creates or updates a limit by its ID — no row numbers involved.
+ * payload: { limitId, min, max, warnMin, warnMax } (empty string/null clears)
+ */
+async function upsertLimit(payload, token, sheets) {
+  const sess = validateSession(token);
+  if (!sess) return { error: 'SESSION_EXPIRED' };
+  if (sess.role !== 'supervisor') return { error: 'Access denied.' };
+
+  const { limitId, min, max, warnMin, warnMax } = payload;
+  if (!limitId) return { error: 'limitId is required.' };
+
+  // Resolve label/prefix/unit from config when this limit backs a known param
+  let label = limitId, unit = payload.unit || '';
+  for (const secCfg of Object.values(SECTIONS)) {
+    const p = (SHEET_PARAMS[secCfg.sheet] || []).find(x => x.limitId === limitId);
+    if (p) { label = `${secCfg.label} — ${p.key}`; unit = unit || p.unit || ''; break; }
+  }
+  const prefix = String(limitId).split('_')[0];
+  const num = v => (v === '' || v === null || v === undefined || isNaN(parseFloat(v))) ? '' : parseFloat(v);
+
+  const headers = await sheets.getSheetHeaders(SH.LIMITS);
+  const colMap = buildColMap(headers);
+  const row = new Array(headers.length).fill('');
+  const set = (key, val) => { const i = findColIndex(colMap, key); if (i >= 0) row[i] = val; };
+  set('ID', limitId);
+  set('Label', label);
+  set('Prefix', prefix);
+  set('Min', num(min));
+  set('Max', num(max));
+  set('Warn Min', num(warnMin));
+  set('Warn Max', num(warnMax));
+  set('Unit', unit);
+
+  const rows = await sheets.getSheet(SH.LIMITS);
+  const idIdx = findColIndex(colMap, 'ID');
+  const existingIdx = rows.findIndex(r => String(r[idIdx] || '').trim() === limitId);
+
+  if (existingIdx >= 0) {
+    await sheets.updateRow(SH.LIMITS, DB_START + existingIdx, row);
+  } else {
+    await sheets.appendRow(SH.LIMITS, row);
+  }
+  _limitsCache = null;
+  return { success: true };
+}
+
 // ─── LIMITS CRUD ──────────────────────────────────────────────────────────────
 
 async function getAllLimits(token, sheets) {
@@ -693,8 +808,20 @@ async function saveTarget(payload, token, sheets) {
   if (!sess) return { error: 'SESSION_EXPIRED' };
   if (!canManageTargets(sess.role)) return { error: 'Access denied.' };
 
-  const { month, paramId, param, unit, target, notes, rowNum } = payload;
-  if (!month || !paramId) return { error: 'Month and Param ID required.' };
+  let { month, paramId, param, unit, target, notes, rowNum, section, paramKey } = payload;
+  if (!month) return { error: 'Month is required.' };
+
+  // Catalog mode: derive id/label/unit from the configured section + parameter
+  if (section && paramKey) {
+    const secCfg = SECTIONS[section];
+    if (!secCfg) return { error: 'Unknown section.' };
+    const p = (SHEET_PARAMS[secCfg.sheet] || []).find(x => x.key === paramKey);
+    if (!p) return { error: 'Unknown parameter for this section.' };
+    paramId = `${section}:${p.key}`;
+    param   = `${secCfg.label} — ${p.key}`;
+    unit    = unit || p.unit || '';
+  }
+  if (!paramId) return { error: 'Select a parameter (or enter a custom Param ID).' };
 
   const headers = await sheets.getSheetHeaders(SH.TARGETS);
   const colMap = buildColMap(headers);
@@ -708,6 +835,16 @@ async function saveTarget(payload, token, sheets) {
   set('Notes', notes || '');
   set('Set By', sess.name || sess.username);
   set('Updated', new Date().toISOString());
+
+  // Upsert: one target per (month, param) — no duplicate rows from re-saving
+  if (!rowNum) {
+    const rows = await sheets.getSheet(SH.TARGETS);
+    const monthIdx = findColIndex(colMap, 'Month');
+    const idIdx    = findColIndex(colMap, 'Param ID');
+    const existingIdx = rows.findIndex(r =>
+      String(r[monthIdx] || '').trim() === month && String(r[idIdx] || '').trim() === paramId);
+    if (existingIdx >= 0) rowNum = DB_START + existingIdx;
+  }
 
   if (rowNum) {
     await sheets.updateRow(SH.TARGETS, rowNum, row);
@@ -850,6 +987,7 @@ module.exports = {
   getIndexData, getSectionData, getEntryFormConfig, submitData,
   getMonthlyReport, getAlerts,
   getAllLimits, updateLimit,
+  getParamCatalog, getLimitCatalog, upsertLimit,
   getAllTargets, saveTarget,
   getChemicalInventory, updateChemInventory,
   buildColMap, findColIndex,

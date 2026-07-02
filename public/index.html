@@ -304,16 +304,26 @@
       <input type="month" id="tgt-month">
     </div>
     <div class="form-row">
-      <label>Param ID</label>
-      <input type="text" id="tgt-param-id" placeholder="e.g. CRUSH_PROD">
+      <label>Section</label>
+      <select id="tgt-section" onchange="tgtSectionChanged()"></select>
     </div>
-    <div class="form-row">
-      <label>Parameter Name</label>
-      <input type="text" id="tgt-param" placeholder="e.g. Crushing Production">
+    <div class="form-row" id="tgt-paramkey-row">
+      <label>Parameter <span id="tgt-unit-hint" style="color:var(--txt3);font-size:10px"></span></label>
+      <select id="tgt-paramkey" onchange="tgtParamChanged()"></select>
     </div>
-    <div class="form-row">
-      <label>Unit</label>
-      <input type="text" id="tgt-unit" placeholder="e.g. t">
+    <div id="tgt-custom-rows" style="display:none">
+      <div class="form-row">
+        <label>Custom Param ID</label>
+        <input type="text" id="tgt-param-id" placeholder="e.g. CRUSH_PROD">
+      </div>
+      <div class="form-row">
+        <label>Parameter Name</label>
+        <input type="text" id="tgt-param" placeholder="e.g. Crushing Production">
+      </div>
+      <div class="form-row">
+        <label>Unit</label>
+        <input type="text" id="tgt-unit" placeholder="e.g. t">
+      </div>
     </div>
     <div class="form-row">
       <label>Target Value</label>

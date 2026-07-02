@@ -80,6 +80,9 @@ router.get('/export/report', async (req, res) => {
 
 router.post('/limits',         handle((body) => data.getAllLimits(body.token, sheets)));
 router.post('/limits/update',  handle((body) => data.updateLimit(body, body.token, sheets)));
+router.post('/limits/catalog', handle((body) => data.getLimitCatalog(body.token, sheets)));
+router.post('/limits/upsert',  handle((body) => data.upsertLimit(body, body.token, sheets)));
+router.post('/params-catalog', handle((body) => data.getParamCatalog(body)));
 
 // ─── TARGETS ROUTES ───────────────────────────────────────────────────────────
 

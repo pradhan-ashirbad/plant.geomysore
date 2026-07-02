@@ -1117,10 +1117,9 @@ async function loadTargets() {
     <div class="section-block">
       <div class="section-block-title">${m}</div>
       <div class="tbl-wrap"><table class="dtbl">
-        <thead><tr><th>ID</th><th>Parameter</th><th>Unit</th><th>Target</th><th>Notes</th><th>Set By</th><th>Action</th></tr></thead>
+        <thead><tr><th>Parameter</th><th>Unit</th><th>Target</th><th>Notes</th><th>Set By</th><th>Action</th></tr></thead>
         <tbody>${byMonth[m].map(t => `<tr>
-          <td class="td-gold">${t.paramId}</td>
-          <td class="td-label">${t.param}</td>
+          <td class="td-label">${t.param || t.paramId}</td>
           <td class="td-unit">${t.unit}</td>
           <td style="color:var(--maroon);font-weight:700;font-family:var(--mono)">${fmt(t.target,2)}</td>
           <td>${t.notes||''}</td>
@@ -1131,9 +1130,48 @@ async function loadTargets() {
     </div>`).join('');
 }
 
+// Section/parameter catalog for dropdowns — fetched once per session
+async function getParamCatalog() {
+  if (STATE.paramCatalog) return STATE.paramCatalog;
+  const data = await api('params-catalog');
+  if (data && data.sections) STATE.paramCatalog = data.sections;
+  return STATE.paramCatalog || [];
+}
+
+async function populateTargetSelectors(selSection, selParam) {
+  const sections = await getParamCatalog();
+  const secSel = document.getElementById('tgt-section');
+  secSel.innerHTML = '<option value="">— Select section —</option>' +
+    sections.map(s => `<option value="${s.key}">${s.label}</option>`).join('') +
+    '<option value="__custom__">Custom (enter manually)</option>';
+  if (selSection) secSel.value = selSection;
+  tgtSectionChanged(selParam);
+}
+
+function tgtSectionChanged(selParam) {
+  const secKey = document.getElementById('tgt-section').value;
+  const custom = secKey === '__custom__';
+  document.getElementById('tgt-custom-rows').style.display  = custom ? '' : 'none';
+  document.getElementById('tgt-paramkey-row').style.display = custom || !secKey ? 'none' : '';
+  if (custom || !secKey) { document.getElementById('tgt-unit-hint').textContent = ''; return; }
+
+  const section = (STATE.paramCatalog || []).find(s => s.key === secKey);
+  const paramSel = document.getElementById('tgt-paramkey');
+  paramSel.innerHTML = (section ? section.params : [])
+    .map(p => `<option value="${p.key}" data-unit="${p.unit}">${p.key}</option>`).join('');
+  if (selParam) paramSel.value = selParam;
+  tgtParamChanged();
+}
+
+function tgtParamChanged() {
+  const sel = document.getElementById('tgt-paramkey');
+  const unit = sel.selectedOptions[0] ? sel.selectedOptions[0].getAttribute('data-unit') : '';
+  document.getElementById('tgt-unit-hint').textContent = unit ? `· unit: ${unit}` : '';
+}
+
 function openTargetModal() {
   document.getElementById('modal-target-title').textContent = 'Add Target';
-  document.getElementById('tgt-month').value    = '';
+  document.getElementById('tgt-month').value    = STATE.filterMonth || '';
   document.getElementById('tgt-param-id').value = '';
   document.getElementById('tgt-param').value    = '';
   document.getElementById('tgt-unit').value     = '';
@@ -1141,43 +1179,67 @@ function openTargetModal() {
   document.getElementById('tgt-notes').value    = '';
   document.getElementById('tgt-rownum').value   = '';
   document.getElementById('tgt-msg').style.display = 'none';
+  populateTargetSelectors();
   document.getElementById('modal-target').classList.remove('hidden');
 }
 
-function editTarget(t) {
+async function editTarget(t) {
   document.getElementById('modal-target-title').textContent = 'Edit Target';
   document.getElementById('tgt-month').value    = t.month || '';
-  document.getElementById('tgt-param-id').value = t.paramId || '';
-  document.getElementById('tgt-param').value    = t.param  || '';
-  document.getElementById('tgt-unit').value     = t.unit   || '';
   document.getElementById('tgt-value').value    = t.target || '';
   document.getElementById('tgt-notes').value    = t.notes  || '';
   document.getElementById('tgt-rownum').value   = t.rowNum || '';
   document.getElementById('tgt-msg').style.display = 'none';
+
+  // Catalog-style IDs look like "sectionKey:Param Key" — preselect dropdowns;
+  // anything else opens in custom mode so legacy targets stay editable.
+  const m = String(t.paramId || '').match(/^([a-z0-9]+):(.+)$/i);
+  await populateTargetSelectors();
+  const sections = STATE.paramCatalog || [];
+  if (m && sections.some(s => s.key === m[1] && s.params.some(p => p.key === m[2]))) {
+    document.getElementById('tgt-section').value = m[1];
+    tgtSectionChanged(m[2]);
+  } else {
+    document.getElementById('tgt-section').value = '__custom__';
+    tgtSectionChanged();
+    document.getElementById('tgt-param-id').value = t.paramId || '';
+    document.getElementById('tgt-param').value    = t.param  || '';
+    document.getElementById('tgt-unit').value     = t.unit   || '';
+  }
   document.getElementById('modal-target').classList.remove('hidden');
 }
 
 async function saveTarget() {
   const month   = document.getElementById('tgt-month').value;
-  const paramId = document.getElementById('tgt-param-id').value.trim();
-  const param   = document.getElementById('tgt-param').value.trim();
-  const unit    = document.getElementById('tgt-unit').value.trim();
+  const secKey  = document.getElementById('tgt-section').value;
   const target  = parseFloat(document.getElementById('tgt-value').value);
   const notes   = document.getElementById('tgt-notes').value.trim();
   const rowNum  = document.getElementById('tgt-rownum').value;
   const msg     = document.getElementById('tgt-msg');
 
-  if (!month || !paramId) {
-    msg.className = 'form-msg error'; msg.style.display = 'block';
-    msg.textContent = 'Month and Param ID are required.'; return;
+  const fail = (text) => {
+    msg.className = 'form-msg error'; msg.style.display = 'block'; msg.textContent = text;
+  };
+  if (!month) return fail('Month is required.');
+
+  const payload = { month, target: isNaN(target) ? 0 : target, notes, rowNum: rowNum || null };
+  if (secKey && secKey !== '__custom__') {
+    const paramKey = document.getElementById('tgt-paramkey').value;
+    if (!paramKey) return fail('Select a parameter.');
+    payload.section = secKey;
+    payload.paramKey = paramKey;
+  } else {
+    payload.paramId = document.getElementById('tgt-param-id').value.trim();
+    payload.param   = document.getElementById('tgt-param').value.trim();
+    payload.unit    = document.getElementById('tgt-unit').value.trim();
+    if (!payload.paramId) return fail(secKey ? 'Enter a custom Param ID.' : 'Select a section.');
   }
 
-  const result = await api('targets/save', { month, paramId, param, unit, target: isNaN(target) ? 0 : target, notes, rowNum: rowNum || null });
+  const result = await api('targets/save', payload);
   if (result && result.success) {
     closeModal('target'); showToast('Target saved'); loadTargets();
   } else {
-    msg.className = 'form-msg error'; msg.style.display = 'block';
-    msg.textContent = result ? result.error : 'Save failed';
+    fail(result ? result.error : 'Save failed');
   }
 }
 
@@ -1437,12 +1499,12 @@ async function loadAdminLimits() {
   const content = document.getElementById('limits-content');
   content.innerHTML = '<div class="loading"><div class="spinner"></div>Loading…</div>';
 
-  const data = await api('limits');
+  const data = await api('limits/catalog');
   if (!data || data.error) {
     content.innerHTML = `<div class="nodata">${data ? data.error : 'Error'}</div>`;
     return;
   }
-  _limitsData = data;
+  _limitsData = data.limits || [];
   renderLimitsTable();
 }
 
@@ -1450,74 +1512,77 @@ function renderLimitsTable() {
   const content = document.getElementById('limits-content');
   const data = _limitsData;
 
-  // Collect unique prefixes
-  const prefixes = ['ALL'];
-  data.forEach(r => {
-    const id = String(r['ID'] || '').trim();
-    const pf = id.split('_')[0];
-    if (pf && !prefixes.includes(pf)) prefixes.push(pf);
-  });
+  if (!data.length) {
+    content.innerHTML = '<div class="nodata">No parameters with limits are configured.</div>';
+    return;
+  }
 
-  const filtered = _limitsFilter === 'ALL' ? data : data.filter(r => {
-    const id = String(r['ID'] || '').trim();
-    return id.startsWith(_limitsFilter + '_');
-  });
+  // Filter buttons by section
+  const sections = ['ALL', ...new Set(data.map(r => r.section))];
+  const filtered = _limitsFilter === 'ALL' ? data : data.filter(r => r.section === _limitsFilter);
+
+  // Group by section for display
+  const bySection = {};
+  filtered.forEach(r => { (bySection[r.section] = bySection[r.section] || []).push(r); });
+
+  const val = v => (v === null || v === undefined || isNaN(v)) ? '' : v;
+  const safe = id => id.replace(/[^a-zA-Z0-9]/g, '_');
 
   content.innerHTML = `
-    <div class="prefix-btns">
-      ${prefixes.map(p => `<button class="prefix-btn ${_limitsFilter === p ? 'active' : ''}" onclick="setLimitsFilter('${p}')">${p}</button>`).join('')}
+    <div style="font-size:12px;color:var(--txt3);margin-bottom:12px">
+      Set the acceptable range per parameter. Values outside <strong>Warn</strong> show amber,
+      outside <strong>Min/Max</strong> show red on the dashboard. Leave a field blank for no limit.
     </div>
-    <div class="tbl-wrap"><table class="dtbl limits-tbl">
-      <thead><tr>
-        <th>ID</th><th>Label</th><th>Min (Crit)</th><th>Max (Crit)</th>
-        <th>Warn Min</th><th>Warn Max</th><th>Unit</th><th>Action</th>
-      </tr></thead>
-      <tbody>${filtered.map(r => {
-        const id = r['ID'] || '';
-        return `<tr>
-          <td class="td-gold" style="white-space:nowrap">${id}</td>
-          <td class="td-label">${r['Label']||''}</td>
-          <td><input type="number" id="lim_min_${id}" value="${r['Min']||''}" step="any"></td>
-          <td><input type="number" id="lim_max_${id}" value="${r['Max']||''}" step="any"></td>
-          <td><input type="number" id="lim_wmin_${id}" value="${r['Warn Min']||''}" step="any"></td>
-          <td><input type="number" id="lim_wmax_${id}" value="${r['Warn Max']||''}" step="any"></td>
-          <td class="td-unit">${r['Unit']||''}</td>
-          <td><button class="save-lim" onclick="saveLimitRow('${id}',${r.rowNum})">Save</button></td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table></div>`;
+    <div class="prefix-btns">
+      ${sections.map(s => `<button class="prefix-btn ${_limitsFilter === s ? 'active' : ''}" onclick="setLimitsFilter('${s}')">${s}</button>`).join('')}
+    </div>
+    ${Object.entries(bySection).map(([section, rows]) => `
+      <div class="section-block">
+        <div class="section-block-title">${section}</div>
+        <div class="tbl-wrap"><table class="dtbl limits-tbl">
+          <thead><tr>
+            <th>Parameter</th><th>Min (Crit)</th><th>Warn Min</th>
+            <th>Warn Max</th><th>Max (Crit)</th><th>Unit</th><th></th>
+          </tr></thead>
+          <tbody>${rows.map(r => {
+            const s = safe(r.limitId);
+            return `<tr>
+              <td class="td-label">${r.param}${r.exists ? '' : ' <span style="color:var(--txt3);font-size:10px">(not set)</span>'}</td>
+              <td><input type="number" id="lim_min_${s}" value="${val(r.min)}" step="any" placeholder="—"></td>
+              <td><input type="number" id="lim_wmin_${s}" value="${val(r.warnMin)}" step="any" placeholder="—"></td>
+              <td><input type="number" id="lim_wmax_${s}" value="${val(r.warnMax)}" step="any" placeholder="—"></td>
+              <td><input type="number" id="lim_max_${s}" value="${val(r.max)}" step="any" placeholder="—"></td>
+              <td class="td-unit">${r.unit || ''}</td>
+              <td><button class="save-lim" onclick="saveLimitRow('${r.limitId}')">Save</button></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table></div>
+      </div>`).join('')}`;
 }
 
-function setLimitsFilter(prefix) {
-  _limitsFilter = prefix;
+function setLimitsFilter(section) {
+  _limitsFilter = section;
   renderLimitsTable();
 }
 
-async function saveLimitRow(id, rowNum) {
-  const r = _limitsData.find(x => x['ID'] === id);
-  if (!r) return;
-
+async function saveLimitRow(limitId) {
+  const safe = limitId.replace(/[^a-zA-Z0-9]/g, '_');
   const getVal = (sfx) => {
-    const el = document.getElementById(`lim_${sfx}_${id}`);
-    return el ? (el.value !== '' ? parseFloat(el.value) : '') : '';
+    const el = document.getElementById(`lim_${sfx}_${safe}`);
+    return el && el.value !== '' ? parseFloat(el.value) : null;
   };
 
-  // Build row array matching headers
-  const headers = await api('limits').then(d => {
-    if (!d || !d.length) return [];
-    return Object.keys(d[0]).filter(k => k !== 'rowNum');
-  });
+  const min = getVal('min'), max = getVal('max');
+  const warnMin = getVal('wmin'), warnMax = getVal('wmax');
+  if (min !== null && max !== null && min > max) {
+    showToast('Min cannot be greater than Max', 'error'); return;
+  }
 
-  // Simple approach: patch the values in the _limitsData record
-  const updated = { ...r, 'Min': getVal('min'), 'Max': getVal('max'), 'Warn Min': getVal('wmin'), 'Warn Max': getVal('wmax') };
-  const rowArray = Object.keys(updated).filter(k => k !== 'rowNum').map(k => updated[k]);
-
-  const result = await api('limits/update', { rowNum, row: rowArray });
+  const result = await api('limits/upsert', { limitId, min, max, warnMin, warnMax });
   if (result && result.success) {
-    showToast(`Limit ${id} updated`);
-    // Update local data
-    const idx = _limitsData.findIndex(x => x['ID'] === id);
-    if (idx >= 0) _limitsData[idx] = { ...updated, rowNum };
+    showToast('Limit updated');
+    const rec = _limitsData.find(x => x.limitId === limitId);
+    if (rec) Object.assign(rec, { min, max, warnMin, warnMax, exists: true });
   } else {
     showToast(result ? result.error : 'Save failed', 'error');
   }
