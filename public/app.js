@@ -508,11 +508,6 @@ function detSetMode(mode) {
   document.getElementById('det-date').style.display        = mode === 'date'  ? '' : 'none';
   document.getElementById('det-month').style.display       = mode === 'month' ? '' : 'none';
   document.getElementById('det-range-wrap').style.display  = mode === 'range' ? 'inline-flex' : 'none';
-  document.getElementById('det-overlay-wrap').style.display = mode === 'month' ? 'inline-flex' : 'none';
-  if (mode !== 'month' && STATE.monthOverlay) {
-    STATE.monthOverlay = false; STATE.prevSectionData = null;
-    const cb = document.getElementById('det-overlay'); if (cb) cb.checked = false;
-  }
 }
 
 function detFilterPayload() {
@@ -574,10 +569,17 @@ function renderDetailData(activeKey, data) {
     return;
   }
 
-  content.innerHTML = subTabsHtml() + renderSection(data);
+  // Leaching keeps its own tank-specific visualizations (heatmap, tank
+  // profile, all-tanks trend); every other section gets the single
+  // customizable Production Trend chart.
+  const showProdTrend = activeKey !== 'leaching';
+  content.innerHTML = subTabsHtml() + renderSection(data) + (showProdTrend ? productionTrendBlockHtml() : '');
 
   // Build charts after DOM settles
-  setTimeout(() => { buildSectionCharts(data); renderCustomCards(activeKey, data); }, 60);
+  setTimeout(() => {
+    buildSectionCharts(data);
+    if (showProdTrend) buildProductionTrendChart(activeKey, data);
+  }, 60);
 }
 
 // ─── SECTION RENDERER ─────────────────────────────────────────────────────────
@@ -631,11 +633,6 @@ function renderCrushing(data) {
         <div class="kpi-unit">t/hr</div>
       </div>
     </div>
-    <div class="chart-wrap">
-      <div class="chart-title">Production Trend${(data.targets||{})['Production'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
-      <div class="chart-canvas-wrap"><canvas id="chart-crushing-prod"></canvas></div>
-    </div>
-    ${cumulativeChartHtml(data, 'Production', 'crushing-cum', 'Production (t)')}
     ${chemStrip(data.chemicals)}
     ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
@@ -671,11 +668,6 @@ function renderMilling(data) {
         <div class="kpi-unit">g/t</div>
       </div>
     </div>
-    <div class="chart-wrap">
-      <div class="chart-title">Milling Trend${(data.targets||{})['Production'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
-      <div class="chart-canvas-wrap"><canvas id="chart-milling-prod"></canvas></div>
-    </div>
-    ${cumulativeChartHtml(data, 'Production', 'milling-cum', 'Production (t)')}
     ${chemStrip(data.chemicals)}
     ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
@@ -796,10 +788,6 @@ function renderFilterPress(data) {
         <div class="kpi-unit">ppm &nbsp;·&nbsp; ${pmRows.length} readings</div>
       </div>
     </div>
-    <div class="chart-wrap">
-      <div class="chart-title">Au by Shift</div>
-      <div class="chart-canvas-wrap"><canvas id="chart-fp-au"></canvas></div>
-    </div>
     ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
 }
@@ -850,32 +838,12 @@ function renderGold(data) {
         <div class="kpi-unit">g</div>
       </div>
     </div>
-    <div class="chart-wrap">
-      <div class="chart-title">Gold Production Trend${(data.targets||{})['Au Content (g)'] != null ? ' <span style="color:var(--gold);font-weight:400;font-size:11px">(dashed = daily target)</span>' : ''}</div>
-      <div class="chart-canvas-wrap"><canvas id="chart-gold-prod"></canvas></div>
-    </div>
-    ${cumulativeChartHtml(data, 'Au Content (g)', 'gold-cum', 'Au Content (g)')}
     ${genericTableHtml(data)}`;
 }
 
 // ── Generic ───────────────────────────────────────────────────────────────────
 function renderGenericSection(data) {
   return `${chemStrip(data.chemicals)}${stoppagesHtml(data.stoppages)}${genericTableHtml(data)}`;
-}
-
-/**
- * Cumulative-vs-target chart block markup — only rendered when a target
- * exists for paramKey and the view spans a full month (needed to compute
- * a meaningful trajectory).
- */
-function cumulativeChartHtml(data, paramKey, canvasId, label) {
-  const target = (data.targets || {})[paramKey];
-  if (target == null || !data.targetDaysInMonth || !data.isAggregate) return '';
-  return `
-    <div class="chart-wrap">
-      <div class="chart-title">Cumulative ${label} vs Target (${data.targetMonth})</div>
-      <div class="chart-canvas-wrap"><canvas id="chart-${canvasId}"></canvas></div>
-    </div>`;
 }
 
 // ─── SHARED HTML HELPERS ──────────────────────────────────────────────────────
@@ -987,47 +955,6 @@ function limitBandDatasets(lim, labels, yAxisID) {
  * A flat dashed gold line representing a target value, drawn behind the
  * actual data so it reads as a reference line rather than a series.
  */
-function targetLineDataset(value, labels, yAxisID, label) {
-  if (value === null || value === undefined || isNaN(value)) return [];
-  return [{
-    label: label || 'Target', data: labels.map(() => value),
-    borderColor: '#B8860B', borderWidth: 1.5, borderDash: [8, 4],
-    pointRadius: 0, pointHitRadius: 0, fill: false,
-    type: 'line', yAxisID: yAxisID || 'y', order: 99,
-  }];
-}
-
-/**
- * Renders a cumulative-actual-vs-target-trajectory chart into canvasId, for
- * a full-month view. actual is a running sum built day-by-day across the
- * target month from dailyRows' `${sumKey}__sum` field; trajectory is a
- * straight line from 0 to targetTotal across the days in the month.
- */
-function buildCumulativeChart(canvasId, dailyRows, sumKey, targetTotal, targetMonth, daysInMonth, label) {
-  const canvas = document.getElementById(canvasId);
-  if (!canvas || !targetTotal || !daysInMonth || !targetMonth) return;
-
-  const byDate = {};
-  (dailyRows || []).forEach(r => { byDate[r.__date] = r; });
-
-  const labels = [], actual = [], trajectory = [];
-  let running = 0;
-  for (let d = 1; d <= daysInMonth; d++) {
-    const dateStr = `${targetMonth}-${String(d).padStart(2, '0')}`;
-    labels.push(String(d));
-    const row = byDate[dateStr];
-    const sumVal = row ? parseFloat(row[sumKey + '__sum']) : NaN;
-    if (!isNaN(sumVal)) running += sumVal;
-    actual.push(+running.toFixed(2));
-    trajectory.push(+(targetTotal * d / daysInMonth).toFixed(2));
-  }
-
-  buildChart(canvasId, labels, [
-    { label: `Cumulative ${label}`, data: actual, borderColor: '#7B1E2E', backgroundColor: 'rgba(123,30,46,.12)', fill: true, tension: .25, pointRadius: 2 },
-    { label: 'Target Trajectory', data: trajectory, borderColor: '#B8860B', borderDash: [6, 4], fill: false, pointRadius: 0, tension: 0 },
-  ], { y: { title: { display: true, text: label } } });
-}
-
 /**
  * Bar chart of a single parameter's latest value across a set of tanks —
  * a compact "leach train health" snapshot for the current moment.
@@ -1097,26 +1024,11 @@ function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
 
 }
 
-// ─── CUSTOM CHART CARDS (user-picked parameters + chart type) ─────────────────
-// Custom charts live in the SAME grid as the section's built-in production
-// charts (not a separate block below). Each card has its own gear icon for
-// picking its parameter/type, plus an "+ Add Chart" tile to create more.
-// Persisted per section/sub-tab in localStorage.
-
-function _chartCardsKey(sectionKey) {
-  return 'chartCards:' + sectionKey;
-}
-
-function loadChartCards(sectionKey) {
-  try {
-    const raw = localStorage.getItem(_chartCardsKey(sectionKey));
-    return raw ? JSON.parse(raw) : [];
-  } catch (e) { return []; }
-}
-
-function saveChartCards(sectionKey, cards) {
-  try { localStorage.setItem(_chartCardsKey(sectionKey), JSON.stringify(cards)); } catch (e) { /* storage unavailable */ }
-}
+// ─── PRODUCTION TREND: ONE customizable multi-series chart per section ────────
+// Instead of one chart per parameter, each section gets a single "Production
+// Trend" chart. Users add/remove parameters as series on THAT chart, each
+// with its own type (Bar/Line/Area/Scatter); series sharing a unit share a
+// Y-axis, series with different units get their own. Persisted per section.
 
 // Numeric, chartable parameters for a section (excludes text/time/select —
 // autoCalc fields like TPH are included since they're still numeric).
@@ -1124,177 +1036,193 @@ function _chartableParams(data) {
   return (data.params || []).filter(p => !p.isText && !p.isTime && !p.isSelect);
 }
 
-/**
- * Moves every built-in `.chart-wrap` chart into a shared `.charts-grid`
- * container (creating one if needed) so custom cards render alongside the
- * production charts instead of in a separately-titled section. Safe to call
- * on every page load — idempotent.
- */
-function ensureChartsGrid(container) {
-  let grid = document.getElementById('charts-grid');
-  if (grid) return grid;
-
-  const existingWraps = container.querySelectorAll('.chart-wrap');
-  grid = document.createElement('div');
-  grid.className = 'charts-grid';
-  grid.id = 'charts-grid';
-
-  if (existingWraps.length) {
-    existingWraps[0].parentNode.insertBefore(grid, existingWraps[0]);
-    existingWraps.forEach(w => grid.appendChild(w));
-  } else {
-    // No built-in charts on this section — put the grid at the top of the page.
-    container.insertBefore(grid, container.firstChild);
-  }
-  return grid;
+function _trendSeriesKey(sectionKey) {
+  return 'trendSeries:' + sectionKey;
 }
 
-function renderCustomCards(sectionKey, data) {
-  const content = document.getElementById('det-content');
-  const grid = ensureChartsGrid(content);
+function loadTrendSeries(sectionKey, data) {
+  try {
+    const raw = localStorage.getItem(_trendSeriesKey(sectionKey));
+    if (raw) return JSON.parse(raw);
+  } catch (e) { /* fall through to default */ }
 
-  grid.querySelectorAll('.custom-chart-card, .add-chart-tile').forEach(el => el.remove());
+  // First-ever visit to this section: default to Production as a bar chart
+  // (or the first chartable parameter if there's no literal "Production").
+  const chartable = _chartableParams(data);
+  const prod = chartable.find(p => p.key === 'Production') || chartable[0];
+  return prod ? [{ id: 'default', paramKey: prod.key, type: 'bar' }] : [];
+}
 
-  const cards = loadChartCards(sectionKey);
-  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
-  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
-  const labels = rows.map(r => r.__date || r.__time || '');
-  const paramsByKey = {};
-  _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
+function saveTrendSeries(sectionKey, series) {
+  try { localStorage.setItem(_trendSeriesKey(sectionKey), JSON.stringify(series)); } catch (e) { /* storage unavailable */ }
+}
 
-  cards.forEach(card => {
-    const p = paramsByKey[card.paramKey];
-    if (!p) return;
-    const cardEl = document.createElement('div');
-    cardEl.className = 'chart-wrap custom-chart-card';
-    cardEl.innerHTML = `
+function productionTrendBlockHtml() {
+  return `
+    <div class="chart-wrap">
       <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center">
-        <div class="chart-title">${p.label}${p.unit ? ` (${p.unit})` : ''}</div>
-        <button class="chart-gear-btn" title="Customize this chart">⚙</button>
+        <div class="chart-title">Production Trend</div>
+        <button class="chart-gear-btn" onclick="openTrendSeriesManager()" title="Add or edit chart parameters">⚙</button>
       </div>
-      <div class="chart-canvas-wrap"><canvas id="chart-custom-${card.id}"></canvas></div>`;
-    cardEl.querySelector('.chart-gear-btn').addEventListener('click', () => openCardCustomizer(card.id));
-    grid.appendChild(cardEl);
-
-    const values = rows.map(r => { const v = parseFloat(r[card.paramKey]); return isNaN(v) ? null : v; });
-    buildCustomChart('chart-custom-' + card.id, p.label, labels, values, card.type);
-  });
-
-  const addTile = document.createElement('div');
-  addTile.className = 'chart-wrap add-chart-tile';
-  addTile.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:180px;color:var(--txt3);font-size:13px;cursor:pointer">+ Add Chart</div>`;
-  addTile.addEventListener('click', () => openCardCustomizer('new'));
-  grid.appendChild(addTile);
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-prod-trend"></canvas></div>
+    </div>`;
 }
 
-/**
- * Opens the single-card editor. cardId === 'new' creates a card on save;
- * otherwise edits (or removes) the existing one.
- */
-function openCardCustomizer(cardId) {
-  const data = STATE.lastSectionData;
-  const sectionKey = STATE.currentSubSec || STATE.currentSec;
-  if (!data) { showToast('Open a section first', 'error'); return; }
+const TREND_PALETTE = ['#7B1E2E','#B8860B','#2471A3','#1A7A4A','#7D3C98','#C0392B','#D35400','#16A085'];
 
-  const params = _chartableParams(data);
-  if (!params.length) { showToast('No numeric parameters available to chart', 'error'); return; }
-
-  const sel = document.getElementById('cc-param');
-  sel.innerHTML = params.map(p => `<option value="${p.key}">${p.label}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
-
-  const isNew = cardId === 'new';
-  document.getElementById('cc-modal-title').textContent = isNew ? 'Add Chart' : 'Customize Chart';
-  document.getElementById('cc-card-id').value = isNew ? '' : cardId;
-  document.getElementById('cc-delete-btn').style.display = isNew ? 'none' : '';
-
-  if (!isNew) {
-    const card = loadChartCards(sectionKey).find(c => c.id === cardId);
-    if (card) { sel.value = card.paramKey; document.getElementById('cc-type').value = card.type; }
-  } else {
-    document.getElementById('cc-type').value = 'line';
-  }
-
-  document.getElementById('modal-chart-customize').classList.remove('hidden');
-}
-
-function saveCardCustomization() {
-  const sectionKey = STATE.currentSubSec || STATE.currentSec;
-  const existingId = document.getElementById('cc-card-id').value;
-  const cardId = existingId || ('card_' + Date.now());
-  const paramKey = document.getElementById('cc-param').value;
-  const type = document.getElementById('cc-type').value;
-
-  const cards = loadChartCards(sectionKey);
-  const idx = cards.findIndex(c => c.id === cardId);
-  if (idx >= 0) cards[idx] = { id: cardId, paramKey, type };
-  else cards.push({ id: cardId, paramKey, type });
-
-  saveChartCards(sectionKey, cards);
-  closeModal('chart-customize');
-  if (STATE.lastSectionData) renderCustomCards(sectionKey, STATE.lastSectionData);
-}
-
-function deleteCustomCard() {
-  const sectionKey = STATE.currentSubSec || STATE.currentSec;
-  const cardId = document.getElementById('cc-card-id').value;
-  const cards = loadChartCards(sectionKey).filter(c => c.id !== cardId);
-  saveChartCards(sectionKey, cards);
-  closeModal('chart-customize');
-  if (STATE.lastSectionData) renderCustomCards(sectionKey, STATE.lastSectionData);
-}
-
-/**
- * Builds a single-series chart of any of the four user-facing types.
- * Pie/doughnut charts skip cartesian scales entirely (categorical slices).
- */
-function buildCustomChart(canvasId, label, labels, values, type) {
+function buildProductionTrendChart(sectionKey, data) {
+  const canvasId = 'chart-prod-trend';
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (STATE.charts[canvasId]) {
     try { STATE.charts[canvasId].destroy(); } catch (e) {}
     delete STATE.charts[canvasId];
   }
-  if (typeof Chart === 'undefined') return;
 
-  const PALETTE = ['#7B1E2E','#B8860B','#2471A3','#1A7A4A','#7D3C98','#C0392B','#D35400','#16A085'];
+  const series = loadTrendSeries(sectionKey, data);
+  if (!series.length || typeof Chart === 'undefined') return;
 
-  if (type === 'pie') {
-    STATE.charts[canvasId] = new Chart(canvas, {
-      type: 'pie',
-      data: {
-        labels,
-        datasets: [{ label, data: values.map(v => v === null ? 0 : v), backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]) }],
-      },
-      options: {
-        responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } } },
-      },
-    });
-    return;
-  }
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
+  const labels = rows.map(r => r.__date || r.__time || '');
+  const paramsByKey = {};
+  _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
 
-  const isArea = type === 'area';
-  const chartType = isArea ? 'line' : type; // 'area' is a filled line
+  // Assign a Y-axis per unique unit so parameters with different units (e.g.
+  // tonnes vs t/hr) each get their own scale instead of being squashed together.
+  const unitToAxis = {};
+  const datasets = [];
+  series.forEach((s, i) => {
+    const p = paramsByKey[s.paramKey];
+    if (!p) return;
+    const unit = p.unit || '—';
+    if (!(unit in unitToAxis)) unitToAxis[unit] = 'y' + Object.keys(unitToAxis).length;
+    const axisId = unitToAxis[unit];
+    const color = TREND_PALETTE[i % TREND_PALETTE.length];
+    const values = rows.map(r => { const v = parseFloat(r[s.paramKey]); return isNaN(v) ? null : v; });
+    const label = p.label + (p.unit ? ` (${p.unit})` : '');
+
+    if (s.type === 'bar') {
+      datasets.push({ type: 'bar', label, data: values, backgroundColor: color + 'A6', yAxisID: axisId });
+    } else if (s.type === 'area') {
+      datasets.push({ type: 'line', label, data: values, borderColor: color, backgroundColor: color + '26', fill: true, tension: .3, pointRadius: 2, yAxisID: axisId });
+    } else if (s.type === 'scatter') {
+      datasets.push({ type: 'line', label, data: values, borderColor: color, backgroundColor: color, showLine: false, pointRadius: 5, yAxisID: axisId });
+    } else {
+      datasets.push({ type: 'line', label, data: values, borderColor: color, backgroundColor: 'transparent', fill: false, tension: .3, pointRadius: 2, yAxisID: axisId });
+    }
+  });
+
+  const scales = { x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } } };
+  Object.entries(unitToAxis).forEach(([unit, axisId], i) => {
+    scales[axisId] = {
+      position: i % 2 === 0 ? 'left' : 'right',
+      beginAtZero: false,
+      grid: { display: i === 0, color: 'rgba(0,0,0,.05)' },
+      ticks: { font: { size: 10 } },
+      title: { display: unit !== '—', text: unit === '—' ? '' : unit },
+    };
+  });
+
   STATE.charts[canvasId] = new Chart(canvas, {
-    type: chartType,
-    data: {
-      labels,
-      datasets: [{
-        label, data: values,
-        borderColor: '#7B1E2E',
-        backgroundColor: chartType === 'bar' ? 'rgba(123,30,46,.65)' : (isArea ? 'rgba(123,30,46,.15)' : 'transparent'),
-        fill: isArea, tension: .3, pointRadius: chartType === 'line' ? 2 : 0, borderWidth: 1.75,
-      }],
-    },
+    data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
-      plugins: { legend: { display: false } },
-      scales: {
-        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
-        y: { beginAtZero: false, grid: { color: 'rgba(0,0,0,.05)' }, ticks: { font: { size: 10 } } },
+      plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 12, font: { size: 10 } } } },
+      scales,
+      onClick: (evt, elements, chart) => {
+        if (!elements.length) return;
+        const handler = _drillClickHandler(data, isMonth);
+        if (handler) handler(chart.data.labels[elements[0].index]);
       },
     },
   });
+}
+
+function openTrendSeriesManager() {
+  const data = STATE.lastSectionData;
+  const sectionKey = STATE.currentSubSec || STATE.currentSec;
+  if (!data) { showToast('Open a section first', 'error'); return; }
+
+  const chartable = _chartableParams(data);
+  const paramsByKey = {};
+  chartable.forEach(p => { paramsByKey[p.key] = p; });
+
+  STATE._trendSectionKey = sectionKey;
+  _renderTrendSeriesList(sectionKey, paramsByKey);
+  document.getElementById('modal-chart-customize').classList.remove('hidden');
+}
+
+function _renderTrendSeriesList(sectionKey, paramsByKey) {
+  const series = loadTrendSeries(sectionKey, STATE.lastSectionData);
+  const list = document.getElementById('cc-series-list');
+
+  list.innerHTML = series.length ? series.map(s => {
+    const p = paramsByKey[s.paramKey];
+    if (!p) return '';
+    return `
+      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">
+        <span style="flex:1;font-size:13px">${p.label}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">(${p.unit})</span>` : ''}</span>
+        <select class="filter-input" onchange="changeTrendSeriesType('${s.id}', this.value)">
+          <option value="bar"     ${s.type==='bar'?'selected':''}>Bar</option>
+          <option value="line"    ${s.type==='line'?'selected':''}>Line</option>
+          <option value="area"    ${s.type==='area'?'selected':''}>Area</option>
+          <option value="scatter" ${s.type==='scatter'?'selected':''}>Scatter</option>
+        </select>
+        <button class="btn-cancel" onclick="removeTrendSeries('${s.id}')" style="padding:3px 9px;color:var(--crit);border-color:var(--crit-bdr)">✕</button>
+      </div>`;
+  }).join('') : '<div class="nodata" style="padding:12px 0">No parameters on this chart yet.</div>';
+
+  const usedKeys = new Set(series.map(s => s.paramKey));
+  const available = Object.values(paramsByKey).filter(p => !usedKeys.has(p.key));
+  const addSel = document.getElementById('cc-add-param');
+  const addBtn = document.getElementById('cc-add-btn');
+  if (available.length) {
+    addSel.disabled = false; addBtn.disabled = false;
+    addSel.innerHTML = available.map(p => `<option value="${p.key}">${p.label}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
+  } else {
+    addSel.disabled = true; addBtn.disabled = true;
+    addSel.innerHTML = '<option>All parameters added</option>';
+  }
+}
+
+function addTrendSeries() {
+  const sectionKey = STATE._trendSectionKey;
+  const data = STATE.lastSectionData;
+  const paramKey = document.getElementById('cc-add-param').value;
+  const type = document.getElementById('cc-add-type').value;
+  if (!paramKey) return;
+
+  const series = loadTrendSeries(sectionKey, data);
+  series.push({ id: 'series_' + Date.now(), paramKey, type });
+  saveTrendSeries(sectionKey, series);
+
+  const paramsByKey = {};
+  _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
+  _renderTrendSeriesList(sectionKey, paramsByKey);
+  buildProductionTrendChart(sectionKey, data);
+}
+
+function changeTrendSeriesType(seriesId, type) {
+  const sectionKey = STATE._trendSectionKey;
+  const data = STATE.lastSectionData;
+  const series = loadTrendSeries(sectionKey, data);
+  const s = series.find(x => x.id === seriesId);
+  if (s) s.type = type;
+  saveTrendSeries(sectionKey, series);
+  buildProductionTrendChart(sectionKey, data);
+}
+
+function removeTrendSeries(seriesId) {
+  const sectionKey = STATE._trendSectionKey;
+  const data = STATE.lastSectionData;
+  const series = loadTrendSeries(sectionKey, data).filter(s => s.id !== seriesId);
+  saveTrendSeries(sectionKey, series);
+
+  const paramsByKey = {};
+  _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
+  _renderTrendSeriesList(sectionKey, paramsByKey);
+  buildProductionTrendChart(sectionKey, data);
 }
 
 function buildSectionCharts(data) {
@@ -1307,68 +1235,10 @@ function buildSectionCharts(data) {
 
   const labels = rows.map(r => r.__date || r.__time || '');
 
-  if (key === 'crushing') {
-    const overlay = _overlayContext(data, isMonth);
-    const chartLabels = overlay ? overlay.labels : labels;
-    const prodVals = overlay ? overlay.cur('Production') : rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
-    const tphVals  = overlay ? overlay.cur('TPH')        : rows.map(r => { const v = parseFloat(r['TPH']);        return isNaN(v) ? null : v; });
-    const dailyTarget = _dailyTarget(data, 'Production');
-    const datasets = [
-      { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(192,57,43,.65)', type: 'bar',  yAxisID: 'y'  },
-      { label: 'TPH (t/hr)',     data: tphVals,  borderColor: '#2471A3', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
-      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Target (t)'),
-      ..._overlayDataset(overlay, 'Production', 'y'),
-    ];
-    buildChart('chart-crushing-prod', chartLabels, datasets,
-      { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 't/hr' } } },
-      { onPointClick: _drillClickHandler(data, isMonth, overlay) });
-    buildCumulativeChart('chart-crushing-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
-  }
-
-  if (key === 'milling') {
-    const overlay = _overlayContext(data, isMonth);
-    const chartLabels = overlay ? overlay.labels : labels;
-    const prodVals = overlay ? overlay.cur('Production')  : rows.map(r => { const v = parseFloat(r['Production']); return isNaN(v) ? null : v; });
-    const fgVals   = overlay ? overlay.cur('Feed Grade')  : rows.map(r => { const v = parseFloat(r['Feed Grade']); return isNaN(v) ? null : v; });
-    const dailyTarget = _dailyTarget(data, 'Production');
-    const datasets = [
-      { label: 'Production (t)', data: prodVals, backgroundColor: 'rgba(36,113,163,.65)', type: 'bar',  yAxisID: 'y'  },
-      { label: 'Feed Grade (g/t)', data: fgVals, borderColor: '#B8860B', fill: false, type: 'line', yAxisID: 'y2', tension: .3, pointRadius: 3 },
-      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Target (t)'),
-      ..._overlayDataset(overlay, 'Production', 'y'),
-    ];
-    buildChart('chart-milling-prod', chartLabels, datasets,
-      { y: { title: { display: true, text: 't' } }, y2: { title: { display: true, text: 'g/t' } } },
-      { onPointClick: _drillClickHandler(data, isMonth, overlay) });
-    buildCumulativeChart('chart-milling-cum', data.dailyRows, 'Production', (data.targets||{})['Production'], data.targetMonth, data.targetDaysInMonth, 'Production (t)');
-  }
-
   if (key === 'leaching') {
     const param = STATE.leachHmParam || 'nacn';
     buildLeachMultiTankChart(data, param);
     buildLeachTankProfile(data, param);
-  }
-
-  if (key === 'filterpress') {
-    const auVals = rows.map(r => { const v = parseFloat(r['Au']); return isNaN(v) ? null : v; });
-    const labelsWithShift = rows.map(r => (r.__shift ? r.__shift.slice(0,2) : '') + ' ' + (r.__date||''));
-    buildChart('chart-fp-au', labelsWithShift, [
-      { label: 'Au (ppm)', data: auVals, borderColor: '#B8860B', fill: false, tension: .3, pointRadius: 4 },
-    ], {});
-  }
-
-  if (key === 'gold') {
-    const overlay = _overlayContext(data, isMonth);
-    const chartLabels = overlay ? overlay.labels : labels;
-    const massVals = overlay ? overlay.cur('Dore Mass (g)') : rows.map(r => { const v = parseFloat(r['Dore Mass (g)']); return isNaN(v) ? null : v; });
-    const dailyTarget = _dailyTarget(data, 'Au Content (g)');
-    const datasets = [
-      { label: 'Dore Mass (g)', data: massVals, backgroundColor: 'rgba(184,134,11,.6)', type: 'bar' },
-      ...targetLineDataset(dailyTarget, chartLabels, 'y', 'Daily Au Target (g)'),
-      ..._overlayDataset(overlay, 'Dore Mass (g)', 'y'),
-    ];
-    buildChart('chart-gold-prod', chartLabels, datasets, {}, { onPointClick: _drillClickHandler(data, isMonth, overlay) });
-    buildCumulativeChart('chart-gold-cum', data.dailyRows, 'Au Content (g)', (data.targets||{})['Au Content (g)'], data.targetMonth, data.targetDaysInMonth, 'Au Content (g)');
   }
 
   if (key === 'carbon') {
@@ -1383,104 +1253,17 @@ function dayOfMonth(dateStr) {
 }
 
 /**
- * Builds a day-of-month-aligned view of the current section vs. the cached
- * previous month (STATE.prevSectionData), so two months' curves overlay on
- * the same 1..31 x-axis. Returns null unless overlay mode is on, we're in a
- * full-month view, and the cached previous month matches this section.
- */
-function _overlayContext(data, isMonth) {
-  if (!isMonth || !STATE.monthOverlay || !STATE.prevSectionData) return null;
-  const prev = STATE.prevSectionData;
-  if (!prev || prev.error || prev.section !== data.section) return null;
-
-  const labels = Array.from({ length: 31 }, (_, i) => String(i + 1));
-  const curByDay = {}, prevByDay = {};
-  (data.dailyRows || []).forEach(r => { const d = dayOfMonth(r.__date); if (d) curByDay[d] = r; });
-  (prev.dailyRows  || []).forEach(r => { const d = dayOfMonth(r.__date); if (d) prevByDay[d] = r; });
-
-  return {
-    labels,
-    cur:  key => labels.map((_, i) => { const r = curByDay[i + 1];  const v = r ? parseFloat(r[key]) : NaN; return isNaN(v) ? null : v; }),
-    prev: key => labels.map((_, i) => { const r = prevByDay[i + 1]; const v = r ? parseFloat(r[key]) : NaN; return isNaN(v) ? null : v; }),
-    prevLabel: prev.targetMonth || prev.date || 'previous month',
-  };
-}
-
-function _overlayDataset(overlay, key, yAxisID) {
-  if (!overlay) return [];
-  return [{
-    label: `Prev month (${overlay.prevLabel})`, data: overlay.prev(key),
-    borderColor: 'rgba(100,100,100,.65)', borderDash: [4, 3], backgroundColor: 'transparent',
-    type: 'line', yAxisID: yAxisID || 'y', fill: false, pointRadius: 0, tension: .3,
-  }];
-}
-
-/**
  * Click handler for month/range trend charts: navigates section detail to
- * the exact date clicked. When overlay mode has switched the x-axis to
- * day-of-month numbers, reconstructs the date from the current month.
+ * the exact date clicked.
  */
-function _drillClickHandler(data, isMonth, overlay) {
+function _drillClickHandler(data, isMonth) {
   if (!isMonth) return undefined;
   return (label) => {
-    let dateStr = label;
-    if (overlay) {
-      const day = parseInt(label, 10);
-      if (isNaN(day)) return;
-      const month = data.targetMonth || ((data.dailyRows || [])[0] && data.dailyRows[0].__date.slice(0, 7));
-      if (!month) return;
-      dateStr = `${month}-${String(day).padStart(2, '0')}`;
-    }
-    if (!dateStr) return;
-    document.getElementById('det-date').value = dateStr;
+    if (!label) return;
+    document.getElementById('det-date').value = label;
     detSetMode('date');
     loadDetail();
   };
-}
-
-async function toggleMonthOverlay() {
-  const checkbox = document.getElementById('det-overlay');
-  const checked = checkbox.checked;
-
-  if (!checked) {
-    STATE.monthOverlay = false;
-    STATE.prevSectionData = null;
-    if (STATE.lastSectionData) buildSectionCharts(STATE.lastSectionData);
-    return;
-  }
-
-  const curMonth = document.getElementById('det-month').value;
-  if (!curMonth) {
-    showToast('Pick a month first', 'error');
-    checkbox.checked = false;
-    return;
-  }
-
-  const prevMonth = _prevMonthOf(curMonth);
-  const prevData = await api('section', { section: STATE.currentSubSec || STATE.currentSec, month: prevMonth });
-  if (!prevData || prevData.error) {
-    showToast(prevData ? prevData.error : 'Could not load previous month', 'error');
-    checkbox.checked = false;
-    return;
-  }
-
-  STATE.monthOverlay = true;
-  STATE.prevSectionData = prevData;
-  if (STATE.lastSectionData) buildSectionCharts(STATE.lastSectionData);
-}
-
-function _prevMonthOf(monthStr) {
-  const [y, m] = monthStr.split('-').map(Number);
-  const d = new Date(y, m - 2, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-}
-
-// Converts a monthly target total into a per-day figure, only meaningful
-// when the current view spans the target's full month.
-function _dailyTarget(data, paramKey) {
-  const total = (data.targets || {})[paramKey];
-  if (total == null || !data.targetDaysInMonth) return null;
-  return +(total / data.targetDaysInMonth).toFixed(2);
 }
 
 const LEACH_LT_TANKS = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
@@ -1520,7 +1303,7 @@ function buildLeachMultiTankChart(data, param) {
   if (titleEl) titleEl.textContent = `Leaching Trend — All Tanks (${paramLabel})`;
 
   buildChart('chart-leach-main', labels, datasets, {}, {
-    onPointClick: _drillClickHandler(data, isMonth, null),
+    onPointClick: _drillClickHandler(data, isMonth),
   });
 }
 

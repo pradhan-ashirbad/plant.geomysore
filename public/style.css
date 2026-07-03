@@ -621,18 +621,8 @@ body {
 }
 
 /* ═══════════════════════════════════════════════════════════════════
-   CHARTS GRID (built-in + custom chart cards, unified)
+   CHART GEAR BUTTON (per-chart customize icon)
 ═══════════════════════════════════════════════════════════════════ */
-.charts-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
-  gap: 14px; margin-bottom: 14px; align-items: start;
-}
-.charts-grid > .chart-wrap { margin-bottom: 0; }
-.add-chart-tile {
-  border-style: dashed; border-width: 2px; background: transparent;
-  min-height: 180px; display: flex; transition: all .15s;
-}
-.add-chart-tile:hover { border-color: var(--gold); background: var(--gold-pale); }
 .chart-gear-btn {
   background: var(--bg3); border: 1px solid var(--bdr); border-radius: 4px;
   padding: 2px 7px; font-size: 12px; line-height: 1.5; cursor: pointer;
