@@ -43,11 +43,14 @@ async function api(endpoint, payload = {}) {
 }
 
 // ─── CLIENT-SIDE READ CACHE ─────────────────────────────────────────────────────
-// Short-lived cache so flipping between dashboard cards / sections re-renders
-// instantly instead of re-fetching + showing skeletons every time. Any write
-// action (submit entry, save target/limit, import, etc.) clears it so users
-// never see stale data after making a change.
-const CACHE_TTL_MS = 45000;
+// Stale-while-revalidate: anything cached in the last 10 minutes renders
+// instantly when the user navigates back to a page (no skeleton flash);
+// if the entry is older than the freshness window, the data is re-fetched
+// in the background and the page silently re-renders when it arrives.
+// Any write action (submit entry, save target/limit, import, etc.) clears
+// the cache so users never see stale data after making a change.
+const CACHE_TTL_MS = 10 * 60 * 1000;  // how long an entry may still be rendered
+const CACHE_FRESH_MS = 45000;         // older than this → background refresh
 
 function cacheKey(endpoint, payload) {
   const { token, ...rest } = payload || {};
@@ -59,6 +62,11 @@ function cacheGet(key) {
   if (!hit) return null;
   if (Date.now() - hit.ts > CACHE_TTL_MS) { STATE.cache.delete(key); return null; }
   return hit.data;
+}
+
+function cacheIsStale(key) {
+  const hit = STATE.cache.get(key);
+  return !hit || Date.now() - hit.ts > CACHE_FRESH_MS;
 }
 
 function cacheSet(key, data) {
@@ -233,6 +241,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // ─── PAGE NAVIGATION ──────────────────────────────────────────────────────────
 
 function showPage(name) {
+  STATE.page = name;
   document.querySelectorAll('.page').forEach(p => p.classList.add('hidden'));
   document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
   const pg = document.getElementById('page-' + name);
@@ -265,7 +274,6 @@ function alSetMode(mode) {
 async function loadAlerts() {
   const content = document.getElementById('alerts-content');
   const summary = document.getElementById('alerts-summary');
-  content.innerHTML = skeletonCards(2);
 
   const payload = {};
   if ((STATE.alertMode || 'date') === 'month') {
@@ -274,12 +282,34 @@ async function loadAlerts() {
     payload.date = document.getElementById('al-date').value || STATE.filterDate;
   }
 
+  const key = cacheKey('alerts', payload);
+  const cached = cacheGet(key);
+  if (cached) {
+    renderAlerts(cached);
+    if (cacheIsStale(key)) {
+      api('alerts', payload).then(data => {
+        if (!data || data.error) return;
+        cacheSet(key, data);
+        if (STATE.page === 'alerts') renderAlerts(data);
+      });
+    }
+    return;
+  }
+
+  content.innerHTML = skeletonCards(2);
   const data = await api('alerts', payload);
   if (!data || data.error) {
     summary.innerHTML = '';
     content.innerHTML = `<div class="nodata">${data ? data.error : 'Error loading alerts'}</div>`;
     return;
   }
+  cacheSet(key, data);
+  renderAlerts(data);
+}
+
+function renderAlerts(data) {
+  const content = document.getElementById('alerts-content');
+  const summary = document.getElementById('alerts-summary');
 
   summary.innerHTML = `
     <div class="kpi-s-tile ${data.critical ? 'crit' : ''}">
@@ -392,6 +422,18 @@ async function loadDashboard(force) {
 
   if (cached) {
     renderDashboard(cached);
+    // Stale-while-revalidate: refresh quietly in the background so the
+    // user never stares at a skeleton just for flipping back to this page.
+    if (cacheIsStale(key)) {
+      api('dashboard', payload).then(data => {
+        if (!data || data.error) return;
+        cacheSet(key, data);
+        // Only re-render if the user is still looking at this same view
+        if (STATE.page === 'dashboard' && cacheKey('dashboard', dashFilterPayload()) === key) {
+          renderDashboard(data);
+        }
+      });
+    }
     return;
   }
 
@@ -535,6 +577,17 @@ async function loadDetail(force) {
 
   if (cached) {
     renderDetailData(activeKey, cached);
+    // Stale-while-revalidate: refresh quietly in the background.
+    if (cacheIsStale(key)) {
+      api('section', payload).then(data => {
+        if (!data || data.error) return;
+        cacheSet(key, data);
+        const nowKey = cacheKey('section', { section: STATE.currentSubSec || STATE.currentSec, ...detFilterPayload() });
+        if (STATE.page === 'detail' && nowKey === key) {
+          renderDetailData(activeKey, data);
+        }
+      });
+    }
     return;
   }
 

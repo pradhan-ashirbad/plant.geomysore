@@ -857,7 +857,7 @@ async function getLimitCatalog(token, sheets) {
       catalog.push({
         limitId: p.limitId,
         section: secCfg.label, sectionKey,
-        param: p.key, unit: p.unit || lim.unit || '',
+        param: p.limitLabel || p.key, unit: p.unit || lim.unit || '',
         min: lim.min ?? null, max: lim.max ?? null,
         warnMin: lim.warnMin ?? null, warnMax: lim.warnMax ?? null,
         exists: !!limitsMap[p.limitId],
@@ -896,7 +896,7 @@ async function upsertLimit(payload, token, sheets) {
   let label = limitId, unit = payload.unit || '';
   for (const secCfg of Object.values(SECTIONS)) {
     const p = (SHEET_PARAMS[secCfg.sheet] || []).find(x => x.limitId === limitId);
-    if (p) { label = `${secCfg.label} — ${p.key}`; unit = unit || p.unit || ''; break; }
+    if (p) { label = `${secCfg.label} — ${p.limitLabel || p.key}`; unit = unit || p.unit || ''; break; }
   }
   const prefix = String(limitId).split('_')[0];
   const num = v => (v === '' || v === null || v === undefined || isNaN(parseFloat(v))) ? '' : parseFloat(v);

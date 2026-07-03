@@ -147,16 +147,19 @@ function _buildLeachingParams() {
     { key: 'Date', label: 'Date', unit: '', isText: true },
     { key: 'Time', label: 'Time', unit: '', isTime: true },
   ];
+  // NaCN/pH/DO limits are shared across all tanks of a group (one Limits
+  // editor row controls every LT tank's NaCN color, etc); Au keeps its
+  // historical per-tank IDs.
   LT_TANKS.forEach(t => {
-    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Leach' });
-    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Leach' });
-    params.push({ key: `${t} DO (ppm)`,         label: 'DO',            unit: 'ppm', tank: t, tankGroup: 'Leach' });
+    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Leach', limitId: 'LEACH_NACN', limitLabel: 'All Leach Tanks — NaCN (ppm)' });
+    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Leach', limitId: 'LEACH_PH', limitLabel: 'All Leach Tanks — pH' });
+    params.push({ key: `${t} DO (ppm)`,         label: 'DO',            unit: 'ppm', tank: t, tankGroup: 'Leach', limitId: 'LEACH_DO', limitLabel: 'All Leach Tanks — DO (ppm)' });
     params.push({ key: `${t} Au in Liquor (ppm)`, label: 'Au in Liquor', unit: 'ppm', tank: t, tankGroup: 'Leach', limitId: `LT_AU_${t}` });
     params.push({ key: `${t} Overflow`,         label: 'Overflow',      unit: '',    tank: t, tankGroup: 'Leach', isOverflow: true });
   });
   DT_TANKS.forEach(t => {
-    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Discharge' });
-    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Discharge' });
+    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Discharge', limitId: 'DETOX_NACN', limitLabel: 'All Detox Tanks — NaCN (ppm)' });
+    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Discharge', limitId: 'DETOX_PH', limitLabel: 'All Detox Tanks — pH' });
     params.push({ key: `${t} Au in Liquor (ppm)`, label: 'Au in Liquor', unit: 'ppm', tank: t, tankGroup: 'Discharge', limitId: `DT_AU_${t}` });
   });
   params.push({ key: 'Notes', label: 'Notes', unit: '', isText: true });

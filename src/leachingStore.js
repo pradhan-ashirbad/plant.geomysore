@@ -22,6 +22,53 @@ const { columnDefsFor } = require('./sheetUtils');
 // established role yet (no historical data references them).
 const DT_ROLE = { DT1: 'feed', DT4: 'outlet' };
 
+// Create the two tables on first use so the app works even if
+// db/migrate-003-leaching-tables.sql was never run in Supabase's SQL
+// Editor — a missing table otherwise fails every Leaching read/write
+// with "relation does not exist".
+let _tablesEnsured = false;
+async function _ensureTables() {
+  if (_tablesEnsured) return;
+  await query(`CREATE TABLE IF NOT EXISTS leaching_readings (
+    id SERIAL PRIMARY KEY,
+    entry_date DATE NOT NULL,
+    time_slot TEXT NOT NULL,
+    tank TEXT NOT NULL,
+    nacn NUMERIC,
+    nacn_below_detection BOOLEAN DEFAULT false,
+    ph NUMERIC,
+    dissolved_oxygen NUMERIC,
+    au NUMERIC,
+    au_below_detection BOOLEAN DEFAULT false,
+    overflow TEXT,
+    notes TEXT,
+    submitted_by TEXT,
+    entry_timestamp TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (entry_date, time_slot, tank)
+  )`);
+  await query('CREATE INDEX IF NOT EXISTS idx_leaching_readings_date ON leaching_readings (entry_date)');
+  await query(`CREATE TABLE IF NOT EXISTS detox_readings (
+    id SERIAL PRIMARY KEY,
+    entry_date DATE NOT NULL,
+    time_slot TEXT NOT NULL,
+    tank TEXT NOT NULL,
+    role TEXT,
+    nacn NUMERIC,
+    nacn_below_detection BOOLEAN DEFAULT false,
+    ph NUMERIC,
+    au NUMERIC,
+    au_below_detection BOOLEAN DEFAULT false,
+    notes TEXT,
+    submitted_by TEXT,
+    entry_timestamp TIMESTAMPTZ,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE (entry_date, time_slot, tank)
+  )`);
+  await query('CREATE INDEX IF NOT EXISTS idx_detox_readings_date ON detox_readings (entry_date)');
+  _tablesEnsured = true;
+}
+
 function isLeaching(sheetName) {
   return sheetName === SH.LEACHING;
 }
@@ -133,6 +180,7 @@ function _splitWideRow(byHeader) {
 }
 
 async function appendRow(sheetName, rowArray) {
+  await _ensureTables();
   const defs = _wideDefs();
   const byHeader = {};
   defs.forEach((d, i) => { byHeader[d.header] = rowArray[i]; });
@@ -140,31 +188,47 @@ async function appendRow(sheetName, rowArray) {
   const { entryDate, timeSlot, notes, submittedBy, timestamp, leach, detox } = _splitWideRow(byHeader);
   if (!entryDate) throw new Error('Leaching entry is missing a Date.');
 
-  for (const r of leach) {
+  // One multi-row upsert per table instead of one round-trip per tank —
+  // the historical backfill pushes hundreds of readings through here, and
+  // per-tank queries from a serverless function to Supabase add up to
+  // minutes of wall-clock (long enough to time the request out).
+  if (leach.length) {
+    const params = [];
+    const tuples = leach.map(r => {
+      const base = params.length;
+      params.push(entryDate, timeSlot, r.tank, r.nacn, r.nacnBelowDetection, r.ph, r.dissolvedOxygen, r.au, r.auBelowDetection, r.overflow, notes, submittedBy, timestamp);
+      return `(${Array.from({ length: 13 }, (_, i) => `$${base + i + 1}`).join(',')})`;
+    });
     await query(
       `INSERT INTO leaching_readings
          (entry_date, time_slot, tank, nacn, nacn_below_detection, ph, dissolved_oxygen, au, au_below_detection, overflow, notes, submitted_by, entry_timestamp)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       VALUES ${tuples.join(',')}
        ON CONFLICT (entry_date, time_slot, tank) DO UPDATE SET
          nacn = EXCLUDED.nacn, nacn_below_detection = EXCLUDED.nacn_below_detection,
          ph = EXCLUDED.ph, dissolved_oxygen = EXCLUDED.dissolved_oxygen,
          au = EXCLUDED.au, au_below_detection = EXCLUDED.au_below_detection,
          overflow = EXCLUDED.overflow, notes = EXCLUDED.notes,
          submitted_by = EXCLUDED.submitted_by, entry_timestamp = EXCLUDED.entry_timestamp`,
-      [entryDate, timeSlot, r.tank, r.nacn, r.nacnBelowDetection, r.ph, r.dissolvedOxygen, r.au, r.auBelowDetection, r.overflow, notes, submittedBy, timestamp]
+      params
     );
   }
 
-  for (const r of detox) {
+  if (detox.length) {
+    const params = [];
+    const tuples = detox.map(r => {
+      const base = params.length;
+      params.push(entryDate, timeSlot, r.tank, r.role, r.nacn, r.nacnBelowDetection, r.ph, r.au, r.auBelowDetection, notes, submittedBy, timestamp);
+      return `(${Array.from({ length: 12 }, (_, i) => `$${base + i + 1}`).join(',')})`;
+    });
     await query(
       `INSERT INTO detox_readings
          (entry_date, time_slot, tank, role, nacn, nacn_below_detection, ph, au, au_below_detection, notes, submitted_by, entry_timestamp)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+       VALUES ${tuples.join(',')}
        ON CONFLICT (entry_date, time_slot, tank) DO UPDATE SET
          role = EXCLUDED.role, nacn = EXCLUDED.nacn, nacn_below_detection = EXCLUDED.nacn_below_detection,
          ph = EXCLUDED.ph, au = EXCLUDED.au, au_below_detection = EXCLUDED.au_below_detection,
          notes = EXCLUDED.notes, submitted_by = EXCLUDED.submitted_by, entry_timestamp = EXCLUDED.entry_timestamp`,
-      [entryDate, timeSlot, r.tank, r.role, r.nacn, r.nacnBelowDetection, r.ph, r.au, r.auBelowDetection, notes, submittedBy, timestamp]
+      params
     );
   }
 }
@@ -183,6 +247,7 @@ function _dateStr(d) {
 }
 
 async function _fetchGroups(filter = {}) {
+  await _ensureTables();
   const { date, month, from, to } = filter;
   const conds = [];
   const params = [];
@@ -270,6 +335,7 @@ async function getRowsByDate(sheetName, filter = {}) {
 }
 
 async function deleteAllRows(sheetName) {
+  await _ensureTables();
   await query('DELETE FROM leaching_readings');
   await query('DELETE FROM detox_readings');
 }
