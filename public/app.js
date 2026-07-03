@@ -574,10 +574,10 @@ function renderDetailData(activeKey, data) {
     return;
   }
 
-  content.innerHTML = subTabsHtml() + renderSection(data) + customChartsBlockHtml();
+  content.innerHTML = subTabsHtml() + renderSection(data);
 
   // Build charts after DOM settles
-  setTimeout(() => { buildSectionCharts(data); buildCustomCharts(activeKey, data); }, 60);
+  setTimeout(() => { buildSectionCharts(data); renderCustomCards(activeKey, data); }, 60);
 }
 
 // ─── SECTION RENDERER ─────────────────────────────────────────────────────────
@@ -1097,24 +1097,25 @@ function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
 
 }
 
-// ─── CUSTOM CHARTS (user-picked parameters + chart type) ──────────────────────
-// Lets a user choose, per section/sub-tab, which numeric parameters get a
-// chart and what kind (Line/Bar/Area/Pie). Preferences persist per browser
-// via localStorage, keyed by the sub-section (e.g. 'crushing', 'cyclone').
+// ─── CUSTOM CHART CARDS (user-picked parameters + chart type) ─────────────────
+// Custom charts live in the SAME grid as the section's built-in production
+// charts (not a separate block below). Each card has its own gear icon for
+// picking its parameter/type, plus an "+ Add Chart" tile to create more.
+// Persisted per section/sub-tab in localStorage.
 
-function _chartPrefsKey(sectionKey) {
-  return 'chartPrefs:' + sectionKey;
+function _chartCardsKey(sectionKey) {
+  return 'chartCards:' + sectionKey;
 }
 
-function loadChartPrefs(sectionKey) {
+function loadChartCards(sectionKey) {
   try {
-    const raw = localStorage.getItem(_chartPrefsKey(sectionKey));
-    return raw ? JSON.parse(raw) : {};
-  } catch (e) { return {}; }
+    const raw = localStorage.getItem(_chartCardsKey(sectionKey));
+    return raw ? JSON.parse(raw) : [];
+  } catch (e) { return []; }
 }
 
-function saveChartPrefsFor(sectionKey, prefs) {
-  try { localStorage.setItem(_chartPrefsKey(sectionKey), JSON.stringify(prefs)); } catch (e) { /* storage unavailable */ }
+function saveChartCards(sectionKey, cards) {
+  try { localStorage.setItem(_chartCardsKey(sectionKey), JSON.stringify(cards)); } catch (e) { /* storage unavailable */ }
 }
 
 // Numeric, chartable parameters for a section (excludes text/time/select —
@@ -1123,100 +1124,123 @@ function _chartableParams(data) {
   return (data.params || []).filter(p => !p.isText && !p.isTime && !p.isSelect);
 }
 
-function customChartsBlockHtml() {
-  return `
-    <div class="section-block" id="custom-charts-block" style="display:none">
-      <div class="section-block-title">Custom Charts</div>
-      <div id="custom-charts-list" style="display:flex;flex-direction:column;gap:14px"></div>
-    </div>`;
+/**
+ * Moves every built-in `.chart-wrap` chart into a shared `.charts-grid`
+ * container (creating one if needed) so custom cards render alongside the
+ * production charts instead of in a separately-titled section. Safe to call
+ * on every page load — idempotent.
+ */
+function ensureChartsGrid(container) {
+  let grid = document.getElementById('charts-grid');
+  if (grid) return grid;
+
+  const existingWraps = container.querySelectorAll('.chart-wrap');
+  grid = document.createElement('div');
+  grid.className = 'charts-grid';
+  grid.id = 'charts-grid';
+
+  if (existingWraps.length) {
+    existingWraps[0].parentNode.insertBefore(grid, existingWraps[0]);
+    existingWraps.forEach(w => grid.appendChild(w));
+  } else {
+    // No built-in charts on this section — put the grid at the top of the page.
+    container.insertBefore(grid, container.firstChild);
+  }
+  return grid;
 }
 
-function openChartCustomizer() {
+function renderCustomCards(sectionKey, data) {
+  const content = document.getElementById('det-content');
+  const grid = ensureChartsGrid(content);
+
+  grid.querySelectorAll('.custom-chart-card, .add-chart-tile').forEach(el => el.remove());
+
+  const cards = loadChartCards(sectionKey);
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
+  const labels = rows.map(r => r.__date || r.__time || '');
+  const paramsByKey = {};
+  _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
+
+  cards.forEach(card => {
+    const p = paramsByKey[card.paramKey];
+    if (!p) return;
+    const cardEl = document.createElement('div');
+    cardEl.className = 'chart-wrap custom-chart-card';
+    cardEl.innerHTML = `
+      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="chart-title">${p.label}${p.unit ? ` (${p.unit})` : ''}</div>
+        <button class="chart-gear-btn" title="Customize this chart">⚙</button>
+      </div>
+      <div class="chart-canvas-wrap"><canvas id="chart-custom-${card.id}"></canvas></div>`;
+    cardEl.querySelector('.chart-gear-btn').addEventListener('click', () => openCardCustomizer(card.id));
+    grid.appendChild(cardEl);
+
+    const values = rows.map(r => { const v = parseFloat(r[card.paramKey]); return isNaN(v) ? null : v; });
+    buildCustomChart('chart-custom-' + card.id, p.label, labels, values, card.type);
+  });
+
+  const addTile = document.createElement('div');
+  addTile.className = 'chart-wrap add-chart-tile';
+  addTile.innerHTML = `<div style="display:flex;align-items:center;justify-content:center;height:100%;min-height:180px;color:var(--txt3);font-size:13px;cursor:pointer">+ Add Chart</div>`;
+  addTile.addEventListener('click', () => openCardCustomizer('new'));
+  grid.appendChild(addTile);
+}
+
+/**
+ * Opens the single-card editor. cardId === 'new' creates a card on save;
+ * otherwise edits (or removes) the existing one.
+ */
+function openCardCustomizer(cardId) {
   const data = STATE.lastSectionData;
   const sectionKey = STATE.currentSubSec || STATE.currentSec;
   if (!data) { showToast('Open a section first', 'error'); return; }
 
   const params = _chartableParams(data);
-  const prefs = loadChartPrefs(sectionKey);
-  const safe = k => k.replace(/[^a-zA-Z0-9]/g, '_');
+  if (!params.length) { showToast('No numeric parameters available to chart', 'error'); return; }
 
-  const list = document.getElementById('cc-param-list');
-  if (!params.length) {
-    list.innerHTML = '<div class="nodata">No numeric parameters available to chart.</div>';
+  const sel = document.getElementById('cc-param');
+  sel.innerHTML = params.map(p => `<option value="${p.key}">${p.label}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
+
+  const isNew = cardId === 'new';
+  document.getElementById('cc-modal-title').textContent = isNew ? 'Add Chart' : 'Customize Chart';
+  document.getElementById('cc-card-id').value = isNew ? '' : cardId;
+  document.getElementById('cc-delete-btn').style.display = isNew ? 'none' : '';
+
+  if (!isNew) {
+    const card = loadChartCards(sectionKey).find(c => c.id === cardId);
+    if (card) { sel.value = card.paramKey; document.getElementById('cc-type').value = card.type; }
   } else {
-    list.innerHTML = params.map(p => {
-      const pref = prefs[p.key] || { show: false, type: 'line' };
-      const id = safe(p.key);
-      return `
-        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--bdr)">
-          <input type="checkbox" id="cc-show-${id}" ${pref.show ? 'checked' : ''}>
-          <label style="flex:1;font-size:13px;cursor:pointer" for="cc-show-${id}">
-            ${p.label}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">${p.unit}</span>` : ''}
-          </label>
-          <select id="cc-type-${id}" class="filter-input">
-            <option value="line" ${pref.type === 'line' ? 'selected' : ''}>Line</option>
-            <option value="bar"  ${pref.type === 'bar'  ? 'selected' : ''}>Bar</option>
-            <option value="area" ${pref.type === 'area' ? 'selected' : ''}>Area</option>
-            <option value="pie"  ${pref.type === 'pie'  ? 'selected' : ''}>Pie</option>
-          </select>
-        </div>`;
-    }).join('');
+    document.getElementById('cc-type').value = 'line';
   }
 
-  STATE._ccParams = params; // remember for save
   document.getElementById('modal-chart-customize').classList.remove('hidden');
 }
 
-function saveChartCustomization() {
+function saveCardCustomization() {
   const sectionKey = STATE.currentSubSec || STATE.currentSec;
-  const params = STATE._ccParams || [];
-  const safe = k => k.replace(/[^a-zA-Z0-9]/g, '_');
+  const existingId = document.getElementById('cc-card-id').value;
+  const cardId = existingId || ('card_' + Date.now());
+  const paramKey = document.getElementById('cc-param').value;
+  const type = document.getElementById('cc-type').value;
 
-  const prefs = {};
-  params.forEach(p => {
-    const id = safe(p.key);
-    const showEl = document.getElementById('cc-show-' + id);
-    const typeEl = document.getElementById('cc-type-' + id);
-    if (showEl && showEl.checked) prefs[p.key] = { show: true, type: typeEl.value };
-  });
+  const cards = loadChartCards(sectionKey);
+  const idx = cards.findIndex(c => c.id === cardId);
+  if (idx >= 0) cards[idx] = { id: cardId, paramKey, type };
+  else cards.push({ id: cardId, paramKey, type });
 
-  saveChartPrefsFor(sectionKey, prefs);
+  saveChartCards(sectionKey, cards);
   closeModal('chart-customize');
-  showToast('Chart preferences saved');
-  if (STATE.lastSectionData) buildCustomCharts(sectionKey, STATE.lastSectionData);
+  if (STATE.lastSectionData) renderCustomCards(sectionKey, STATE.lastSectionData);
 }
 
-function buildCustomCharts(sectionKey, data) {
-  const container = document.getElementById('custom-charts-list');
-  const block = document.getElementById('custom-charts-block');
-  if (!container || !block) return;
-
-  const prefs = loadChartPrefs(sectionKey);
-  const selected = _chartableParams(data).filter(p => prefs[p.key] && prefs[p.key].show);
-
-  if (!selected.length) {
-    block.style.display = 'none';
-    container.innerHTML = '';
-    return;
-  }
-  block.style.display = '';
-
-  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
-  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
-  const labels = rows.map(r => r.__date || r.__time || '');
-
-  container.innerHTML = selected.map(p => `
-    <div>
-      <div style="font-size:12px;font-weight:600;color:var(--txt2);margin-bottom:6px">${p.label}${p.unit ? ` (${p.unit})` : ''}</div>
-      <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-custom-${p.key.replace(/[^a-zA-Z0-9]/g, '_')}"></canvas></div>
-    </div>`).join('');
-
-  selected.forEach(p => {
-    const canvasId = 'chart-custom-' + p.key.replace(/[^a-zA-Z0-9]/g, '_');
-    const values = rows.map(r => { const v = parseFloat(r[p.key]); return isNaN(v) ? null : v; });
-    const type = prefs[p.key].type;
-    buildCustomChart(canvasId, p.label, labels, values, type);
-  });
+function deleteCustomCard() {
+  const sectionKey = STATE.currentSubSec || STATE.currentSec;
+  const cardId = document.getElementById('cc-card-id').value;
+  const cards = loadChartCards(sectionKey).filter(c => c.id !== cardId);
+  saveChartCards(sectionKey, cards);
+  closeModal('chart-customize');
+  if (STATE.lastSectionData) renderCustomCards(sectionKey, STATE.lastSectionData);
 }
 
 /**

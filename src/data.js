@@ -245,6 +245,41 @@ function _computeAutoCalc(sheetName, colMap, rowArray) {
   }
 }
 
+/**
+ * Recomputes auto-calc fields for DISPLAY when the stored value is missing —
+ * e.g. rows saved before an auto-calc formula existed, imported without it,
+ * or backfilled inconsistently. Never overwrites a value that's already
+ * present; this is a safety net, not a source of truth (submitData is what
+ * actually persists the calculated value).
+ */
+function _recomputeDisplayAutoCalc(sheetName, rowObj) {
+  const num = (v) => { const n = parseFloat(v); return (v === '' || v === null || v === undefined || isNaN(n)) ? NaN : n; };
+  const isBlank = (v) => v === '' || v === null || v === undefined || isNaN(parseFloat(v));
+
+  if (sheetName === SH.CRUSHING || sheetName === SH.MILLING) {
+    if (isBlank(rowObj['TPH'])) {
+      const prod = num(rowObj['Production']);
+      const hrs  = num(rowObj[sheetName === SH.MILLING ? 'Running Hrs' : 'Running Hours']);
+      if (!isNaN(prod) && !isNaN(hrs) && hrs > 0) rowObj['TPH'] = +(prod / hrs).toFixed(2);
+    }
+  }
+  if (sheetName === SH.GC && isBlank(rowObj['Au Content (g)'])) {
+    const mass  = num(rowObj['Mass (kg)']);
+    const grade = num(rowObj['Au Grade (g/t)']);
+    if (!isNaN(mass) && !isNaN(grade)) rowObj['Au Content (g)'] = +(mass * grade / 1000).toFixed(2);
+  }
+  if (sheetName === SH.GOLD && isBlank(rowObj['Au Content (g)'])) {
+    const mass    = num(rowObj['Dore Mass (g)']);
+    const purity  = num(rowObj['Purity (%)']);
+    if (!isNaN(mass) && !isNaN(purity)) rowObj['Au Content (g)'] = +(mass * purity / 100).toFixed(2);
+  }
+  if (sheetName === SH.ILS && isBlank(rowObj['Recovery (%)'])) {
+    const feed = num(rowObj['Feed Au (ppm)']);
+    const raff = num(rowObj['Raffinate Au (ppm)']);
+    if (!isNaN(feed) && !isNaN(raff) && feed > 0) rowObj['Recovery (%)'] = +((feed - raff) / feed * 100).toFixed(1);
+  }
+}
+
 // ─── PARAM STATUS ANNOTATION ──────────────────────────────────────────────────
 
 function _annotateRow(rowObj, params, limitsMap, targetsMap) {
@@ -361,6 +396,7 @@ async function _buildSectionRows(sheetName, params, filter, limitsMap, sheets) {
         rowObj[p.key] = (raw !== '' && raw !== null && raw !== undefined) ? raw : '';
       }
     });
+    _recomputeDisplayAutoCalc(sheetName, rowObj);
     _annotateRow(rowObj, params, limitsMap, {});
     result.push(rowObj);
   });
