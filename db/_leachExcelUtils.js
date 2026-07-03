@@ -5,6 +5,16 @@
 // layout in some months) — so these helpers read each sheet's own header
 // row and column names dynamically instead of assuming a fixed layout.
 
+const XLSX = require('xlsx');
+
+// Accepts either a file path (CLI usage) or an in-memory Buffer (the
+// browser-upload route — the app runs on Vercel serverless, which has no
+// writable/persistent disk to save an uploaded file to first).
+function loadWorkbook(input) {
+  if (Buffer.isBuffer(input)) return XLSX.read(input, { type: 'buffer', cellDates: true });
+  return XLSX.readFile(input, { cellDates: true });
+}
+
 const CANON_PARAM = [
   [/^nacn\b/i, 'NaCN (ppm)'],
   [/^cn\b/i,   'NaCN (ppm)'],
@@ -60,4 +70,4 @@ function findHeaderRowIndex(rows) {
   return -1;
 }
 
-module.exports = { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex };
+module.exports = { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex, loadWorkbook };

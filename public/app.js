@@ -94,6 +94,12 @@ function showToast(msg, type = 'success') {
 
 // ─── FORMATTERS ───────────────────────────────────────────────────────────────
 
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
 function fmt(v, dec = 2) {
   if (v === '' || v === null || v === undefined) return '—';
   const n = parseFloat(v);
@@ -2001,6 +2007,71 @@ async function doImport() {
     msg.className = 'form-msg error';
     msg.style.display = 'block';
   }
+}
+
+// ── Leaching History Backfill ────────────────────────────────────────────────
+
+async function doLeachHistoryImport() {
+  const msg = document.getElementById('leach-hist-msg');
+  const resultEl = document.getElementById('leach-hist-result');
+  const leachFile = document.getElementById('leach-hist-file').files[0];
+  const detoxFile = document.getElementById('detox-hist-file').files[0];
+  const year = document.getElementById('leach-hist-year').value.trim();
+
+  if (!leachFile && !detoxFile) {
+    msg.textContent = 'Choose at least one file (Leaching and/or Detox).';
+    msg.className = 'form-msg error'; msg.style.display = 'block';
+    return;
+  }
+
+  msg.textContent = 'Uploading and processing… this can take a minute for a full month of data.';
+  msg.className = 'form-msg'; msg.style.display = 'block';
+  resultEl.innerHTML = '';
+
+  const formData = new FormData();
+  if (leachFile) formData.append('leaching', leachFile);
+  if (detoxFile) formData.append('detox', detoxFile);
+  if (year) formData.append('year', year);
+  formData.append('token', STATE.token);
+
+  try {
+    const res = await fetch('/api/admin/import-leaching-history', { method: 'POST', body: formData });
+    const data = await res.json();
+    if (data.error) {
+      msg.textContent = data.error;
+      msg.className = 'form-msg error'; msg.style.display = 'block';
+      return;
+    }
+    cacheClear();
+    msg.textContent = 'Done — see results below.';
+    msg.className = 'form-msg success'; msg.style.display = 'block';
+    resultEl.innerHTML = leachHistoryResultHtml(data);
+  } catch (e) {
+    msg.textContent = 'Upload failed: ' + e.message;
+    msg.className = 'form-msg error'; msg.style.display = 'block';
+  }
+}
+
+function leachHistoryResultHtml(data) {
+  const section = (title, r) => {
+    if (!r) return '';
+    let html = `<div class="form-card" style="margin-top:10px">
+      <div style="font-weight:700;color:var(--txt);margin-bottom:6px">${title}</div>
+      <div style="font-size:12.5px;color:var(--txt2)">${r.sheetsProcessed} day-sheet(s), <b>${r.rowsImported} reading row(s)</b> imported.</div>`;
+    if (r.undatedSheets && r.undatedSheets.length) {
+      html += `<div style="margin-top:8px;font-size:11.5px;color:var(--txt3)">
+        <b>Sheets with no in-cell date:</b><br>${r.undatedSheets.map(s => escapeHtml(s)).join('<br>')}
+      </div>`;
+    }
+    if (r.skippedCols && r.skippedCols.length) {
+      html += `<div style="margin-top:8px;font-size:11.5px;color:var(--txt3)">
+        <b>Columns not imported</b> (unrecognized, or a tank outside the current tank list):<br>${escapeHtml(r.skippedCols.join(', '))}
+      </div>`;
+    }
+    html += '</div>';
+    return html;
+  };
+  return section('Leaching', data.leaching) + section('Detox', data.detox);
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

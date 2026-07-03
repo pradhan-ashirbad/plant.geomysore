@@ -24,7 +24,7 @@ const XLSX = require('xlsx');
 const db = require('../src/db');
 const { SH } = require('../src/config');
 const { columnDefsFor } = require('../src/sheetUtils');
-const { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex } = require('./_leachExcelUtils');
+const { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex, loadWorkbook } = require('./_leachExcelUtils');
 
 const LEACH_HEADERS = columnDefsFor(SH.LEACHING).map(d => d.header);
 const LEACH_HEADER_SET = new Set(LEACH_HEADERS);
@@ -36,8 +36,8 @@ function toWideRow(values) {
   return LEACH_HEADERS.map(h => (values[h] !== undefined ? values[h] : ''));
 }
 
-async function processWorkbook(filePath, skippedCols) {
-  const wb = XLSX.readFile(filePath, { cellDates: true });
+async function processWorkbook(input, skippedCols) {
+  const wb = loadWorkbook(input);
   let sheetsProcessed = 0;
   let rowsImported = 0;
 

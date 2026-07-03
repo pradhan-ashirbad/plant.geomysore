@@ -30,7 +30,7 @@ const XLSX = require('xlsx');
 const db = require('../src/db');
 const { SH } = require('../src/config');
 const { columnDefsFor } = require('../src/sheetUtils');
-const { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex } = require('./_leachExcelUtils');
+const { canonParam, parseTankColumn, timeToHHMM, dateToISO, findHeaderRowIndex, loadWorkbook } = require('./_leachExcelUtils');
 
 const LEACH_HEADERS = columnDefsFor(SH.LEACHING).map(d => d.header);
 const LEACH_HEADER_SET = new Set(LEACH_HEADERS);
@@ -135,8 +135,8 @@ function inferMonthYearMap(wb) {
   return monthToYear;
 }
 
-async function processWorkbook(filePath, skippedCols, opts = {}) {
-  const wb = XLSX.readFile(filePath, { cellDates: true });
+async function processWorkbook(input, skippedCols, opts = {}) {
+  const wb = loadWorkbook(input);
   const monthToYear = inferMonthYearMap(wb);
   const undatedSheets = [];
   let sheetsProcessed = 0;

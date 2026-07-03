@@ -213,6 +213,7 @@
         <button class="admin-nav-item" onclick="adminShowPanel('limits')">Limits Editor</button>
         <button class="admin-nav-item" onclick="adminShowPanel('chem-inv')">Chemical Inventory</button>
         <button class="admin-nav-item" onclick="adminShowPanel('import')">Import Data</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('leach-history')">Leaching History Backfill</button>
         <button class="admin-nav-item" onclick="adminShowPanel('password')">Change Password</button>
       </div>
       <div class="admin-content">
@@ -262,6 +263,33 @@
           <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:480px">
             The first row of your file should be column headers. Column names don't need to match exactly —
             the importer matches them to the app's expected fields automatically.
+          </div>
+        </div>
+
+        <!-- Leaching History Backfill panel -->
+        <div id="admin-panel-leach-history" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Leaching History Backfill</div>
+          <div class="form-card" style="max-width:480px">
+            <div class="form-row">
+              <label>Leaching CN/pH Log (.xlsx)</label>
+              <input type="file" id="leach-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Detox Log (.xlsx)</label>
+              <input type="file" id="detox-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Year override (optional)</label>
+              <input type="text" id="leach-hist-year" placeholder="e.g. 2025 — only needed if a sheet has no date at all and no dated sibling sheet">
+            </div>
+            <div id="leach-hist-msg" class="form-msg"></div>
+            <button class="submit-btn" onclick="doLeachHistoryImport()" style="margin-top:8px">Upload &amp; Backfill</button>
+          </div>
+          <div id="leach-hist-result" style="margin-top:16px;max-width:640px"></div>
+          <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:640px">
+            One-time tool to backfill historical Leaching (LT4-LT10) and Detox (DT1-DT4) tank readings from the
+            plant's day-per-sheet Excel logs. Upload either file alone, or both together. Safe to re-run —
+            re-uploading the same file just rewrites the same readings, it won't duplicate them.
           </div>
         </div>
 
