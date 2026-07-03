@@ -571,22 +571,20 @@ function renderDetailData(activeKey, data) {
 
   // Leaching keeps its own tank-specific visualizations (heatmap, tank
   // profile, all-tanks trend); every other section gets the single
-  // customizable Production Trend chart. Target progress (when a target is
-  // set for this section/period) shows regardless of section.
+  // customizable Production Trend chart. Target progress (when set) shows
+  // inline as one of the KPI tiles — see kpiTargetTileHtml.
   const showProdTrend = activeKey !== 'leaching';
   content.innerHTML = subTabsHtml() + renderSection(data);
 
-  const targetHtml = targetProgressBlockHtml(data);
-  const trendHtml = showProdTrend ? productionTrendBlockHtml() : '';
-  const topBlocks = targetHtml + trendHtml;
-  if (topBlocks) {
+  if (showProdTrend) {
     // Insert right after the KPI row (or right after the sub-tabs/heatmap
-    // area if a section has no KPI row) so these sit near the top, above
+    // area if a section has no KPI row) so it sits near the top, above
     // tables/stoppages/chemical strips — not buried at the bottom.
-    const kpiRow = content.querySelector('.kpi-row-2, .kpi-row-3');
+    const kpiRow = content.querySelector('.kpi-row-1, .kpi-row-2, .kpi-row-3');
     const anchor = kpiRow || content.querySelector('.sub-tabs') || content.firstElementChild;
-    if (anchor) anchor.insertAdjacentHTML('afterend', topBlocks);
-    else content.insertAdjacentHTML('afterbegin', topBlocks);
+    const trendHtml = productionTrendBlockHtml();
+    if (anchor) anchor.insertAdjacentHTML('afterend', trendHtml);
+    else content.insertAdjacentHTML('afterbegin', trendHtml);
   }
 
   // Build charts after DOM settles
@@ -630,23 +628,23 @@ function renderCrushing(data) {
   });
   const avgTph = tphVals.length ? (tphVals.reduce((a,b)=>a+b,0)/tphVals.length) : 0;
 
-  // Production's KPI shows up merged into the target-progress card instead
-  // of as a plain tile when a target is set for it.
-  const hasProdTarget = !!(data.targetProgress || {})['Production'];
+  // Production's tile becomes a gauge tile in place, when a target is set —
+  // same row, same slot, just richer content.
+  const prodTile = kpiTargetTileHtml('Production', data);
 
   return `
-    <div class="${hasProdTarget ? 'kpi-row-2' : 'kpi-row-3'}">
+    <div class="kpi-row-3">
       <div class="kpi-tile">
         <div class="kpi-label">Running Hours</div>
         <div class="kpi-val">${fmt(totalHrs,1)}</div>
         <div class="kpi-unit">hrs</div>
       </div>
-      ${!hasProdTarget ? `
+      ${prodTile || `
       <div class="kpi-tile">
         <div class="kpi-label">Production</div>
         <div class="kpi-val gold">${fmt(totalProd,0)}</div>
         <div class="kpi-unit">tonnes</div>
-      </div>` : ''}
+      </div>`}
       <div class="kpi-tile">
         <div class="kpi-label">Avg TPH</div>
         <div class="kpi-val">${fmt(avgTph,1)}</div>
@@ -669,21 +667,21 @@ function renderMilling(data) {
     if (!isNaN(fg)) fgVals.push(fg);
   });
   const avgFG = fgVals.length ? (fgVals.reduce((a,b)=>a+b,0)/fgVals.length) : 0;
-  const hasProdTarget = !!(data.targetProgress || {})['Production'];
+  const prodTile = kpiTargetTileHtml('Production', data);
 
   return `
-    <div class="${hasProdTarget ? 'kpi-row-2' : 'kpi-row-3'}">
+    <div class="kpi-row-3">
       <div class="kpi-tile">
         <div class="kpi-label">Running Hours</div>
         <div class="kpi-val">${fmt(totalHrs,1)}</div>
         <div class="kpi-unit">hrs</div>
       </div>
-      ${!hasProdTarget ? `
+      ${prodTile || `
       <div class="kpi-tile">
         <div class="kpi-label">Production</div>
         <div class="kpi-val gold">${fmt(totalProd,0)}</div>
         <div class="kpi-unit">tonnes</div>
-      </div>` : ''}
+      </div>`}
       <div class="kpi-tile">
         <div class="kpi-label">Avg Feed Grade</div>
         <div class="kpi-val">${fmt(avgFG,2)}</div>
@@ -847,21 +845,21 @@ function renderGold(data) {
     totalAu   += parseFloat(r['Au Content (g)']) || 0;
   });
 
-  const hasAuTarget = !!(data.targetProgress || {})['Au Content (g)'];
+  const auTile = kpiTargetTileHtml('Au Content (g)', data);
 
   return `
-    <div class="${hasAuTarget ? 'kpi-row-1' : 'kpi-row-2'}">
+    <div class="kpi-row-2">
       <div class="kpi-tile" style="--kpi-color:var(--gold)">
         <div class="kpi-label">Total Dore Mass</div>
         <div class="kpi-val gold">${fmt(totalMass,1)}</div>
         <div class="kpi-unit">g</div>
       </div>
-      ${!hasAuTarget ? `
+      ${auTile || `
       <div class="kpi-tile" style="--kpi-color:var(--gold)">
         <div class="kpi-label">Total Au Content</div>
         <div class="kpi-val gold">${fmt(totalAu,1)}</div>
         <div class="kpi-unit">g</div>
-      </div>` : ''}
+      </div>`}
     </div>
     ${genericTableHtml(data)}`;
 }
@@ -1096,58 +1094,39 @@ const TARGET_STATUS_META = {
 };
 
 /**
- * One compact card per targeted parameter: title/cumulative/unit on the
- * left, a half-circle gauge with % in the center, and (month view only)
- * Monthly Target / Current Rate / Required Rate stacked on the right.
+ * Renders a single targeted parameter as a normal-sized KPI tile (same
+ * grid slot as Running Hours/TPH, not a separate full-width block):
+ * label + cumulative + unit at top, a small gauge with % in the middle,
+ * and — month view only — Monthly Target / Current Rate / Required Rate
+ * stacked directly below the gauge.
  */
-function targetProgressBlockHtml(data) {
-  const progress = data.targetProgress || {};
-  const keys = Object.keys(progress);
-  if (!keys.length) return '';
+function kpiTargetTileHtml(paramKey, data) {
+  const tp = (data.targetProgress || {})[paramKey];
+  if (!tp) return null;
 
   const paramsByKey = {};
   (data.params || []).forEach(p => { paramsByKey[p.key] = p; });
+  const p = paramsByKey[paramKey] || { label: paramKey, unit: '' };
+  const safe = paramKey.replace(/[^a-zA-Z0-9]/g, '_');
+  const unit = p.unit || '';
+  const isMonth = tp.mode === 'month';
 
-  return keys.map(paramKey => {
-    const tp = progress[paramKey];
-    const p = paramsByKey[paramKey] || { label: paramKey, unit: '' };
-    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TARGET;
-    const safe = paramKey.replace(/[^a-zA-Z0-9]/g, '_');
-    const unit = p.unit || '';
-    const isMonth = tp.mode === 'month';
-
-    return `
-    <div class="chart-wrap kpi-target-card">
-      <div class="kpi-target-grid">
-        <div class="kpi-target-left">
-          <div class="kpi-label">${p.label.toUpperCase()}</div>
-          <div class="kpi-val gold">${fmt(tp.actual,0)}</div>
-          <div class="kpi-unit">${unit}</div>
-        </div>
-        <div class="kpi-target-center">
-          <div class="target-gauge-wrap">
-            <canvas id="chart-target-gauge-${safe}"></canvas>
-            <div class="target-gauge-pct">${fmt(tp.pctAchieved,0)}%</div>
-          </div>
-        </div>
-        ${isMonth ? `
-        <div class="kpi-target-right">
-          <div class="kpi-target-stat">
-            <span class="kpi-target-stat-lbl">Monthly Target</span>
-            <span class="kpi-target-stat-val">${fmt(tp.monthlyTarget,0)} ${unit}</span>
-          </div>
-          <div class="kpi-target-stat">
-            <span class="kpi-target-stat-lbl">Current Rate</span>
-            <span class="kpi-target-stat-val">${fmt(tp.currentRate,0)} ${unit}/day</span>
-          </div>
-          <div class="kpi-target-stat">
-            <span class="kpi-target-stat-lbl">Required Rate</span>
-            <span class="kpi-target-stat-val">${tp.requiredRate !== null ? fmt(tp.requiredRate,0) + ' ' + unit + '/day' : '—'}</span>
-          </div>
-        </div>` : ''}
+  return `
+    <div class="kpi-tile kpi-target-tile">
+      <div class="kpi-label">${p.label.toUpperCase()}</div>
+      <div class="kpi-val gold">${fmt(tp.actual,0)}</div>
+      <div class="kpi-unit">${unit}</div>
+      <div class="target-gauge-wrap-sm">
+        <canvas id="chart-target-gauge-${safe}"></canvas>
+        <div class="target-gauge-pct-sm">${fmt(tp.pctAchieved,0)}%</div>
       </div>
+      ${isMonth ? `
+      <div class="kpi-target-substats">
+        <div class="kpi-target-substat"><span>Monthly Target</span><span>${fmt(tp.monthlyTarget,0)} ${unit}</span></div>
+        <div class="kpi-target-substat"><span>Current Rate</span><span>${fmt(tp.currentRate,0)} ${unit}/day</span></div>
+        <div class="kpi-target-substat"><span>Required Rate</span><span>${tp.requiredRate !== null ? fmt(tp.requiredRate,0) + ' ' + unit + '/day' : '—'}</span></div>
+      </div>` : ''}
     </div>`;
-  }).join('');
 }
 
 function buildTargetGauges(data) {
