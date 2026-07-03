@@ -1,40 +1,11 @@
 'use strict';
 
-const { Pool } = require('pg');
+const { query } = require('./pool');
 const { DB_START, SH, SHEET_PARAMS } = require('./config');
+const { headersFor, parseDateValue } = require('./sheetUtils');
+const typed = require('./typedTables');
 
-let _pool = null;
-function _getPool() {
-  if (_pool) return _pool;
-  const connectionString = process.env.DATABASE_URL;
-  if (!connectionString) throw new Error('DATABASE_URL environment variable is not set');
-  _pool = new Pool({ connectionString, ssl: { rejectUnauthorized: false } });
-  return _pool;
-}
-
-function query(text, params) {
-  return _getPool().query(text, params);
-}
-
-// ─── HEADER DEFINITIONS ───────────────────────────────────────────────────────
-// Sheets driven by SHEET_PARAMS get their headers from there (plus bookkeeping
-// columns). Sheets with no SHEET_PARAMS entry (LIMITS/TARGETS/CHEM_INV) get a
-// fixed header list matching what data.js looks up by name.
-
-const _FIXED_HEADERS = {
-  [SH.LIMITS]:   ['ID', 'Label', 'Prefix', 'Min', 'Max', 'Warn Min', 'Warn Max', 'Unit'],
-  [SH.TARGETS]:  ['Month', 'Param ID', 'Param', 'Unit', 'Target', 'Notes', 'Set By', 'Updated'],
-  [SH.CHEM_INV]: ['Chemical', 'Quantity', 'Unit', 'Min Stock', 'Reorder Level', 'Updated'],
-};
-
-function _headersFor(sheetName) {
-  if (_FIXED_HEADERS[sheetName]) return _FIXED_HEADERS[sheetName];
-  const params = SHEET_PARAMS[sheetName];
-  if (params && params.length) {
-    return [...params.map(p => p.key), 'Submitted By', 'Timestamp'];
-  }
-  return null; // unknown sheet — headers must already exist in sheet_headers table
-}
+// ─── HEADERS (generic sheet_rows sheets only — typed sheets use typedTables) ──
 
 // Headers change only on deploy or import, so a short in-process cache saves a
 // round-trip per sheet per request (helps a lot on warm serverless instances).
@@ -45,7 +16,7 @@ async function _ensureHeaders(sheetName) {
   const cached = _headersCache.get(sheetName);
   if (cached && Date.now() - cached.ts < HEADERS_TTL_MS) return cached.headers;
 
-  const defined = _headersFor(sheetName);
+  const defined = headersFor(sheetName);
   let headers;
   if (defined) {
     await query(
@@ -67,30 +38,6 @@ function invalidateHeaderCache(sheetName) {
   else _headersCache.clear();
 }
 
-// ─── DATE HANDLING ────────────────────────────────────────────────────────────
-
-/**
- * Best-effort parse of a raw cell value into 'YYYY-MM-DD' (or null).
- * Handles ISO strings, DD/MM/YYYY, JS Dates, and Excel serial numbers.
- */
-function parseDateValue(v) {
-  if (v === '' || v === null || v === undefined) return null;
-  if (v instanceof Date && !isNaN(v)) return v.toISOString().slice(0, 10);
-  if (typeof v === 'string') {
-    const m = v.match(/^(\d{4}-\d{2}-\d{2})/);
-    if (m) return m[1];
-    const m2 = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
-    if (m2) return `${m2[3]}-${m2[2].padStart(2, '0')}-${m2[1].padStart(2, '0')}`;
-    return null;
-  }
-  if (typeof v === 'number' && v > 20000 && v < 80000) {
-    // Excel/Sheets serial date
-    const epoch = new Date(Date.UTC(1899, 11, 30));
-    return new Date(epoch.getTime() + v * 86400000).toISOString().slice(0, 10);
-  }
-  return null;
-}
-
 function _entryDateFromRow(headers, rowArray) {
   const idx = headers.findIndex(h => String(h).trim().toLowerCase() === 'date');
   if (idx < 0) return null;
@@ -98,11 +45,16 @@ function _entryDateFromRow(headers, rowArray) {
 }
 
 // ─── SHEET INTERFACE (drop-in for the old Google Sheets client) ───────────────
+// Each function checks typed.isTyped(sheetName) first and delegates to the
+// real-table implementation; everything else falls through to the original
+// generic sheet_rows storage, completely unchanged.
 
 /**
  * Returns all rows for a sheet as array-of-arrays, in insertion order.
  */
 async function getSheet(sheetName) {
+  if (typed.isTyped(sheetName)) return typed.getRows(sheetName);
+
   const res = await query(
     'SELECT row_data FROM sheet_rows WHERE sheet_name = $1 ORDER BY id ASC',
     [sheetName]
@@ -116,6 +68,8 @@ async function getSheet(sheetName) {
  * Rows whose entry_date could not be parsed are excluded when a filter is set.
  */
 async function getSheetByDate(sheetName, filter = {}) {
+  if (typed.isTyped(sheetName)) return typed.getRowsByDate(sheetName, filter);
+
   const { date, month, from, to } = filter;
   const conds = ['sheet_name = $1'];
   const params = [sheetName];
@@ -143,6 +97,7 @@ async function getSheetByDate(sheetName, filter = {}) {
  * Returns the header row as an array.
  */
 async function getSheetHeaders(sheetName) {
+  if (typed.isTyped(sheetName)) return typed.getHeaders(sheetName);
   return _ensureHeaders(sheetName);
 }
 
@@ -150,7 +105,7 @@ async function getSheetHeaders(sheetName) {
  * Returns all rows including headers as the first row (rarely used).
  */
 async function getSheetFull(sheetName) {
-  const headers = await _ensureHeaders(sheetName);
+  const headers = await getSheetHeaders(sheetName);
   const rows = await getSheet(sheetName);
   return [headers, ...rows];
 }
@@ -159,6 +114,8 @@ async function getSheetFull(sheetName) {
  * Appends a row to the sheet, extracting entry_date for indexed filtering.
  */
 async function appendRow(sheetName, rowArray) {
+  if (typed.isTyped(sheetName)) return typed.appendRow(sheetName, rowArray);
+
   const headers = await _ensureHeaders(sheetName);
   const entryDate = _entryDateFromRow(headers, rowArray);
   await query(
@@ -172,6 +129,8 @@ async function appendRow(sheetName, rowArray) {
  * (DB_START + index within getSheet's result order).
  */
 async function updateRow(sheetName, rowNum, rowArray) {
+  if (typed.isTyped(sheetName)) return typed.updateRow(sheetName, rowNum, rowArray);
+
   const offset = rowNum - DB_START;
   if (offset < 0) throw new Error(`Invalid rowNum ${rowNum} for sheet ${sheetName}`);
   const headers = await _ensureHeaders(sheetName);
@@ -187,6 +146,7 @@ async function updateRow(sheetName, rowNum, rowArray) {
 
 /**
  * Updates a single cell. row is the legacy rowNum, col is 1-indexed column.
+ * (Unused by the current app — kept for interface completeness.)
  */
 async function updateCell(sheetName, row, col, value) {
   const rows = await getSheet(sheetName);
@@ -197,8 +157,16 @@ async function updateCell(sheetName, row, col, value) {
   await updateRow(sheetName, row, rowArray);
 }
 
+/**
+ * Deletes every row in a sheet (used by the "replace" import mode).
+ */
+async function deleteAllRows(sheetName) {
+  if (typed.isTyped(sheetName)) return typed.deleteAllRows(sheetName);
+  await query('DELETE FROM sheet_rows WHERE sheet_name = $1', [sheetName]);
+}
+
 module.exports = {
   query, getSheet, getSheetByDate, getSheetHeaders, getSheetFull,
-  appendRow, updateRow, updateCell,
+  appendRow, updateRow, updateCell, deleteAllRows,
   parseDateValue, invalidateHeaderCache,
 };

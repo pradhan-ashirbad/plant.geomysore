@@ -53,6 +53,9 @@ function parseWorkbook(buffer) {
 /**
  * Imports parsed rows into `sheetName`'s storage, aligning uploaded columns
  * to the app's canonical header order. mode: 'append' (default) or 'replace'.
+ * Goes through db.js's public interface (getSheetHeaders/appendRow/
+ * deleteAllRows) so this works identically whether the sheet is still on the
+ * generic store or has been migrated to a real typed table.
  */
 async function importIntoSheet(sheetName, uploadedHeaders, uploadedRows, mode = 'append') {
   const canonical = canonicalHeaders(sheetName);
@@ -64,14 +67,12 @@ async function importIntoSheet(sheetName, uploadedHeaders, uploadedRows, mode = 
     throw new Error('No columns in the uploaded file matched this sheet\'s expected columns.');
   }
 
-  await db.query(
-    `INSERT INTO sheet_headers (sheet_name, headers) VALUES ($1, $2)
-     ON CONFLICT (sheet_name) DO UPDATE SET headers = $2`,
-    [sheetName, JSON.stringify(canonical)]
-  );
+  // Ensures generic-store sheets have a headers row; a no-op for typed
+  // sheets (their headers come from the real table's column plan).
+  await db.getSheetHeaders(sheetName);
 
   if (mode === 'replace') {
-    await db.query('DELETE FROM sheet_rows WHERE sheet_name = $1', [sheetName]);
+    await db.deleteAllRows(sheetName);
   }
 
   const dateIdx = canonical.findIndex(h => String(h).trim().toLowerCase() === 'date');
@@ -83,12 +84,11 @@ async function importIntoSheet(sheetName, uploadedHeaders, uploadedRows, mode = 
       if (v instanceof Date) v = v.toISOString().slice(0, 10);
       return v === undefined || v === null ? '' : v;
     });
-    const entryDate = dateIdx >= 0 ? db.parseDateValue(mappedRow[dateIdx]) : null;
-    if (dateIdx >= 0 && entryDate) mappedRow[dateIdx] = entryDate;
-    await db.query(
-      'INSERT INTO sheet_rows (sheet_name, row_data, entry_date) VALUES ($1, $2, $3)',
-      [sheetName, JSON.stringify(mappedRow), entryDate]
-    );
+    if (dateIdx >= 0) {
+      const entryDate = db.parseDateValue(mappedRow[dateIdx]);
+      if (entryDate) mappedRow[dateIdx] = entryDate;
+    }
+    await db.appendRow(sheetName, mappedRow);
     inserted++;
   }
   db.invalidateHeaderCache(sheetName);
