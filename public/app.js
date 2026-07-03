@@ -1114,20 +1114,24 @@ function kpiTargetTileHtml(paramKey, data) {
   const rangeMax = isMonth ? tp.monthlyTarget : tp.target;
 
   return `
-    <div class="kpi-tile kpi-target-tile">
-      <div class="kpi-label">${p.label.toUpperCase()}</div>
-      <div class="kpi-val gold">${fmt(tp.actual,0)}</div>
-      <div class="kpi-unit">${unit}</div>
-      <div class="target-gauge-wrap-sm">
-        <canvas id="chart-target-gauge-${safe}"></canvas>
-        <div class="target-gauge-pct-sm">${fmt(tp.pctAchieved,0)}%</div>
+    <div class="kpi-tile kpi-target-tile${isMonth ? '' : ' kpi-target-tile-daily'}">
+      <div class="kpi-target-col kpi-target-col-info">
+        <div class="kpi-label">${p.label.toUpperCase()}</div>
+        <div class="kpi-val gold">${fmt(tp.actual,0)}</div>
+        <div class="kpi-unit">${unit}</div>
       </div>
-      <div class="target-gauge-range">
-        <span>0</span>
-        <span>${fmt(rangeMax,0)} ${unit}</span>
+      <div class="kpi-target-col kpi-target-col-gauge">
+        <div class="target-gauge-wrap-sm">
+          <canvas id="chart-target-gauge-${safe}"></canvas>
+          <div class="target-gauge-pct-sm">${fmt(tp.pctAchieved,0)}%</div>
+        </div>
+        <div class="target-gauge-range">
+          <span>0</span>
+          <span>${fmt(rangeMax,0)} ${unit}</span>
+        </div>
       </div>
       ${isMonth ? `
-      <div class="kpi-target-substats">
+      <div class="kpi-target-col kpi-target-col-rates">
         <div class="kpi-target-substat">
           <span class="kpi-target-substat-icon rate">&#8635;</span>
           <span class="kpi-target-substat-txt"><span class="kpi-target-substat-lbl">Current Rate</span><span class="kpi-target-substat-val">${fmt(tp.currentRate,0)} ${unit}/day</span></span>
