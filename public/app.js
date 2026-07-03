@@ -571,23 +571,28 @@ function renderDetailData(activeKey, data) {
 
   // Leaching keeps its own tank-specific visualizations (heatmap, tank
   // profile, all-tanks trend); every other section gets the single
-  // customizable Production Trend chart.
+  // customizable Production Trend chart. Target progress (when a target is
+  // set for this section/period) shows regardless of section.
   const showProdTrend = activeKey !== 'leaching';
   content.innerHTML = subTabsHtml() + renderSection(data);
 
-  if (showProdTrend) {
+  const targetHtml = targetProgressBlockHtml(data);
+  const trendHtml = showProdTrend ? productionTrendBlockHtml() : '';
+  const topBlocks = targetHtml + trendHtml;
+  if (topBlocks) {
     // Insert right after the KPI row (or right after the sub-tabs/heatmap
-    // area if a section has no KPI row) so the chart sits near the top,
-    // above tables/stoppages/chemical strips — not buried at the bottom.
+    // area if a section has no KPI row) so these sit near the top, above
+    // tables/stoppages/chemical strips — not buried at the bottom.
     const kpiRow = content.querySelector('.kpi-row-2, .kpi-row-3');
     const anchor = kpiRow || content.querySelector('.sub-tabs') || content.firstElementChild;
-    if (anchor) anchor.insertAdjacentHTML('afterend', productionTrendBlockHtml());
-    else content.insertAdjacentHTML('afterbegin', productionTrendBlockHtml());
+    if (anchor) anchor.insertAdjacentHTML('afterend', topBlocks);
+    else content.insertAdjacentHTML('afterbegin', topBlocks);
   }
 
   // Build charts after DOM settles
   setTimeout(() => {
     buildSectionCharts(data);
+    buildTargetGauges(data);
     if (showProdTrend) buildProductionTrendChart(activeKey, data);
   }, 60);
 }
@@ -1065,6 +1070,106 @@ function loadTrendSeries(sectionKey, data) {
 
 function saveTrendSeries(sectionKey, series) {
   try { localStorage.setItem(_trendSeriesKey(sectionKey), JSON.stringify(series)); } catch (e) { /* storage unavailable */ }
+}
+
+// ─── TARGET PROGRESS (Ahead / On Track / Behind, gauge + bar + variance) ──────
+
+// hexColor is a real canvas-usable color (CSS custom properties can't be used
+// as canvas fillStyle directly); cssColor is for HTML/inline-style contexts.
+const TARGET_STATUS_META = {
+  AHEAD:    { label: '▲ Ahead of Target', cssColor: 'var(--ok)',   hexColor: '#1A7A4A', pill: 'ok'   },
+  ON_TRACK: { label: '✓ On Track',        cssColor: 'var(--ok)',   hexColor: '#1A7A4A', pill: 'ok'   },
+  BEHIND:   { label: '▼ Behind Target',   cssColor: 'var(--crit)', hexColor: '#B91C1C', pill: 'crit' },
+  NO_DATA:  { label: 'No data yet',       cssColor: 'var(--txt3)', hexColor: '#888580', pill: 'none' },
+};
+
+function targetProgressBlockHtml(data) {
+  const progress = data.targetProgress || {};
+  const keys = Object.keys(progress);
+  if (!keys.length) return '';
+
+  const paramsByKey = {};
+  (data.params || []).forEach(p => { paramsByKey[p.key] = p; });
+
+  return keys.map(paramKey => {
+    const tp = progress[paramKey];
+    const p = paramsByKey[paramKey] || { label: paramKey, unit: '' };
+    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TRACK;
+    const safe = paramKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const gaugePct = Math.max(0, Math.min(100, tp.pctAchieved));
+    const expectedPct = tp.mode === 'month' && tp.monthlyTarget
+      ? Math.max(0, Math.min(100, (tp.expected / tp.monthlyTarget) * 100))
+      : null;
+    const unit = p.unit || '';
+    const varSign = tp.variance > 0 ? '+' : '';
+
+    return `
+    <div class="chart-wrap target-card">
+      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <div class="chart-title">${p.label} — Target Progress${tp.mode === 'date' ? ' (Today)' : ' (Month)'}</div>
+        <span class="pill pill-${meta.pill}">${meta.label}</span>
+      </div>
+      <div class="target-gauge-wrap">
+        <canvas id="chart-target-gauge-${safe}"></canvas>
+        <div class="target-gauge-pct">${fmt(tp.pctAchieved,0)}%</div>
+        <div class="target-gauge-sub">of ${tp.mode === 'month' ? 'monthly' : 'daily'} target</div>
+      </div>
+      <div class="target-bar-wrap">
+        <div class="target-bar-track">
+          <div class="target-bar-fill" style="width:${gaugePct}%;background:${meta.cssColor}"></div>
+          ${expectedPct !== null ? `<div class="target-bar-expected-tick" style="left:${expectedPct}%" title="Expected to date: ${fmt(tp.expected,0)} ${unit}"></div>` : ''}
+        </div>
+        <div class="target-bar-labels">
+          <span>${fmt(tp.actual,0)} ${unit} achieved</span>
+          <span>${fmt(tp.mode === 'month' ? tp.monthlyTarget : tp.target,0)} ${unit} target</span>
+        </div>
+      </div>
+      <div class="target-stats-row">
+        <div class="target-stat">
+          <div class="target-stat-val" style="color:${tp.variance >= 0 ? 'var(--ok)' : 'var(--crit)'}">${varSign}${fmt(tp.variance,0)}</div>
+          <div class="target-stat-lbl">Variance (${unit})</div>
+        </div>
+        ${tp.mode === 'month' ? `
+        <div class="target-stat">
+          <div class="target-stat-val">${fmt(tp.projected,0)}</div>
+          <div class="target-stat-lbl">Projected Month-End</div>
+        </div>
+        <div class="target-stat">
+          <div class="target-stat-val">${tp.daysElapsed}/${tp.daysInMonth}</div>
+          <div class="target-stat-lbl">Days Elapsed</div>
+        </div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function buildTargetGauges(data) {
+  const progress = data.targetProgress || {};
+  Object.keys(progress).forEach(paramKey => {
+    const tp = progress[paramKey];
+    const safe = paramKey.replace(/[^a-zA-Z0-9]/g, '_');
+    const canvasId = 'chart-target-gauge-' + safe;
+    const canvas = document.getElementById(canvasId);
+    if (!canvas) return;
+    if (STATE.charts[canvasId]) { try { STATE.charts[canvasId].destroy(); } catch (e) {} delete STATE.charts[canvasId]; }
+    if (typeof Chart === 'undefined') return;
+
+    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TRACK;
+    const achieved = Math.max(0, Math.min(100, tp.pctAchieved));
+
+    STATE.charts[canvasId] = new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels: ['Achieved', 'Remaining'],
+        datasets: [{ data: [achieved, 100 - achieved], backgroundColor: [meta.hexColor, 'rgba(0,0,0,.08)'], borderWidth: 0 }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        circumference: 180, rotation: 270, cutout: '75%',
+        plugins: { legend: { display: false }, tooltip: { enabled: false } },
+      },
+    });
+  });
 }
 
 function productionTrendBlockHtml() {

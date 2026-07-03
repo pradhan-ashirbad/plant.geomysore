@@ -629,3 +629,42 @@ body {
   color: var(--txt2); font-family: var(--font); flex-shrink: 0;
 }
 .chart-gear-btn:hover { border-color: var(--gold); color: var(--gold); }
+
+/* ═══════════════════════════════════════════════════════════════════
+   TARGET PROGRESS (gauge, bar, variance)
+═══════════════════════════════════════════════════════════════════ */
+.target-card { max-width: 100%; }
+.target-gauge-wrap {
+  position: relative; height: 130px; max-width: 260px; margin: 4px auto 0;
+}
+.target-gauge-pct {
+  position: absolute; left: 0; right: 0; bottom: 18px; text-align: center;
+  font-family: var(--mono); font-size: 26px; font-weight: 700; color: var(--txt);
+}
+.target-gauge-sub {
+  position: absolute; left: 0; right: 0; bottom: 2px; text-align: center;
+  font-size: 10px; color: var(--txt3);
+}
+.target-bar-wrap { margin-top: 10px; }
+.target-bar-track {
+  position: relative; height: 12px; border-radius: 6px; background: var(--bg3);
+  overflow: visible;
+}
+.target-bar-fill {
+  height: 100%; border-radius: 6px; transition: width .3s;
+}
+.target-bar-expected-tick {
+  position: absolute; top: -3px; bottom: -3px; width: 2px;
+  background: var(--txt2); transform: translateX(-1px);
+}
+.target-bar-labels {
+  display: flex; justify-content: space-between; margin-top: 6px;
+  font-size: 11px; color: var(--txt2);
+}
+.target-stats-row {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--bdr);
+}
+.target-stat { text-align: center; }
+.target-stat-val { font-family: var(--mono); font-size: 16px; font-weight: 700; color: var(--txt); }
+.target-stat-lbl { font-size: 10px; color: var(--txt3); text-transform: uppercase; margin-top: 2px; }

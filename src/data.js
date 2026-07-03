@@ -565,13 +565,88 @@ async function getSectionData(payload, sheets) {
     } catch (e) { /* targets sheet unavailable — omit */ }
   }
 
+  const targetProgress = _computeTargetProgress(filter, rows, dailyRows, targets, targetMonth, targetDaysInMonth);
+
   return {
     section, label: secCfg.label, color: secCfg.color,
     date: _filterLabel(filter),
     isAggregate,
     hasData, rows, dailyRows, params, stoppages, chemicals, limits,
-    targets, targetMonth, targetDaysInMonth,
+    targets, targetMonth, targetDaysInMonth, targetProgress,
   };
+}
+
+/**
+ * Computes on-track/behind/ahead progress for every targeted parameter.
+ * - Date view: actual for that single day vs. the flat daily target
+ *   (monthly target ÷ days in month).
+ * - Month view: cumulative actual-so-far vs. expected-to-date (daily target
+ *   × days elapsed), plus a run-rate projection for month-end.
+ * Range view is skipped — "expected pace" isn't well-defined over an
+ * arbitrary date range, so the client hides the block in that mode.
+ */
+function _computeTargetProgress(filter, rows, dailyRows, targets, targetMonth, targetDaysInMonth) {
+  const progress = {};
+  if (!targetMonth || !targetDaysInMonth || !Object.keys(targets).length) return progress;
+  if (filter.from || filter.to) return progress; // range view: no well-defined pace
+
+  const isDateMode = !!filter.date;
+
+  Object.entries(targets).forEach(([paramKey, monthlyTarget]) => {
+    if (!monthlyTarget || monthlyTarget <= 0) return;
+    const dailyTarget = +(monthlyTarget / targetDaysInMonth).toFixed(4);
+
+    if (isDateMode) {
+      const actual = rows
+        .filter(r => r.__date === filter.date)
+        .reduce((s, r) => s + (parseFloat(r[paramKey]) || 0), 0);
+      const variance = +(actual - dailyTarget).toFixed(2);
+      const variancePct = dailyTarget ? +((variance / dailyTarget) * 100).toFixed(1) : 0;
+      progress[paramKey] = {
+        mode: 'date',
+        target: +dailyTarget.toFixed(2), actual: +actual.toFixed(2),
+        variance, variancePct,
+        pctAchieved: dailyTarget ? +((actual / dailyTarget) * 100).toFixed(1) : 0,
+        status: _progressStatus(variancePct),
+      };
+      return;
+    }
+
+    // Month mode
+    const now = new Date();
+    const [ty, tm] = targetMonth.split('-').map(Number);
+    let daysElapsed;
+    if (ty < now.getFullYear() || (ty === now.getFullYear() && tm < now.getMonth() + 1)) {
+      daysElapsed = targetDaysInMonth; // a past month is fully elapsed
+    } else if (ty === now.getFullYear() && tm === now.getMonth() + 1) {
+      daysElapsed = now.getDate(); // current month — elapsed so far
+    } else {
+      daysElapsed = 0; // future month
+    }
+
+    const actual = (dailyRows || []).reduce((s, r) => s + (parseFloat(r[paramKey + '__sum']) || 0), 0);
+    const expected = +(dailyTarget * daysElapsed).toFixed(2);
+    const variance = +(actual - expected).toFixed(2);
+    const variancePct = expected ? +((variance / expected) * 100).toFixed(1) : 0;
+    const projected = daysElapsed > 0 ? +((actual / daysElapsed) * targetDaysInMonth).toFixed(2) : 0;
+
+    progress[paramKey] = {
+      mode: 'month',
+      monthlyTarget, dailyTarget: +dailyTarget.toFixed(2),
+      actual: +actual.toFixed(2), expected, variance, variancePct,
+      pctAchieved: +((actual / monthlyTarget) * 100).toFixed(1),
+      projected, daysElapsed, daysInMonth: targetDaysInMonth,
+      status: daysElapsed === 0 ? 'NO_DATA' : _progressStatus(variancePct),
+    };
+  });
+
+  return progress;
+}
+
+function _progressStatus(variancePct) {
+  if (variancePct >= 3) return 'AHEAD';
+  if (variancePct <= -3) return 'BEHIND';
+  return 'ON_TRACK';
 }
 
 // ─── ALERTS ───────────────────────────────────────────────────────────────────
