@@ -1111,6 +1111,8 @@ function kpiTargetTileHtml(paramKey, data) {
   const unit = p.unit || '';
   const isMonth = tp.mode === 'month';
 
+  const rangeMax = isMonth ? tp.monthlyTarget : tp.target;
+
   return `
     <div class="kpi-tile kpi-target-tile">
       <div class="kpi-label">${p.label.toUpperCase()}</div>
@@ -1120,11 +1122,20 @@ function kpiTargetTileHtml(paramKey, data) {
         <canvas id="chart-target-gauge-${safe}"></canvas>
         <div class="target-gauge-pct-sm">${fmt(tp.pctAchieved,0)}%</div>
       </div>
+      <div class="target-gauge-range">
+        <span>0</span>
+        <span>${fmt(rangeMax,0)} ${unit}</span>
+      </div>
       ${isMonth ? `
       <div class="kpi-target-substats">
-        <div class="kpi-target-substat"><span>Monthly Target</span><span>${fmt(tp.monthlyTarget,0)} ${unit}</span></div>
-        <div class="kpi-target-substat"><span>Current Rate</span><span>${fmt(tp.currentRate,0)} ${unit}/day</span></div>
-        <div class="kpi-target-substat"><span>Required Rate</span><span>${tp.requiredRate !== null ? fmt(tp.requiredRate,0) + ' ' + unit + '/day' : '—'}</span></div>
+        <div class="kpi-target-substat">
+          <span class="kpi-target-substat-icon rate">&#8635;</span>
+          <span class="kpi-target-substat-txt"><span class="kpi-target-substat-lbl">Current Rate</span><span class="kpi-target-substat-val">${fmt(tp.currentRate,0)} ${unit}/day</span></span>
+        </div>
+        <div class="kpi-target-substat">
+          <span class="kpi-target-substat-icon req">&#8599;</span>
+          <span class="kpi-target-substat-txt"><span class="kpi-target-substat-lbl">Required Rate</span><span class="kpi-target-substat-val">${tp.requiredRate !== null ? fmt(tp.requiredRate,0) + ' ' + unit + '/day' : '—'}</span></span>
+        </div>
       </div>` : ''}
     </div>`;
 }

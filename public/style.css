@@ -648,13 +648,27 @@ body {
   font-family: var(--mono); font-size: 17px; font-weight: 700; color: var(--txt);
 }
 
+.target-gauge-range {
+  width: 100%; max-width: 150px; display: flex; justify-content: space-between;
+  margin-top: -4px; font-family: var(--mono); font-size: 9.5px; color: var(--txt3);
+}
+
 .kpi-target-substats {
-  width: 100%; display: flex; flex-direction: column; gap: 4px;
-  margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--bdr);
+  width: 100%; display: flex; flex-direction: column; gap: 6px;
+  margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--bdr);
 }
 .kpi-target-substat {
-  display: flex; justify-content: space-between; gap: 8px;
-  font-size: 10.5px; color: var(--txt2);
+  display: flex; align-items: center; gap: 8px;
 }
-.kpi-target-substat span:first-child { color: var(--txt3); }
-.kpi-target-substat span:last-child { font-family: var(--mono); font-weight: 700; color: var(--txt); white-space: nowrap; }
+.kpi-target-substat-icon {
+  flex-shrink: 0; width: 20px; height: 20px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; color: #fff;
+}
+.kpi-target-substat-icon.rate { background: var(--gold); }
+.kpi-target-substat-icon.req  { background: var(--maroon); }
+.kpi-target-substat-txt {
+  display: flex; flex-direction: column; align-items: flex-start; line-height: 1.35;
+}
+.kpi-target-substat-lbl { font-size: 9.5px; color: var(--txt3); letter-spacing: .3px; text-transform: uppercase; }
+.kpi-target-substat-val { font-family: var(--mono); font-size: 12px; font-weight: 700; color: var(--txt); white-space: nowrap; }
