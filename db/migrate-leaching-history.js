@@ -56,6 +56,62 @@ function buildColMap(header, skippedCols) {
 }
 
 /**
+ * 22 April day-sheets carry a SECOND mini-table further down the sheet
+ * ("D O (ppm) of leaching Tanks") with its own header row, its own Time
+ * column at a different position, and tank columns labeled just "LT 4",
+ * "LT 5", etc (DO is implied by the block title, not per-column). It has
+ * no Date column of its own — it belongs to the same single day as the
+ * main table above it. Returns the row index of the DO block's own header
+ * row (the row right after the title), or -1 if this sheet has no such
+ * block.
+ */
+function findDoBlockHeaderIndex(rows) {
+  for (let i = 0; i < rows.length - 1; i++) {
+    if (rows[i].some(c => /D\s*O\s*\(ppm\)/i.test(String(c)))) return i + 1;
+  }
+  return -1;
+}
+
+async function processDoBlock(rows, doHeaderIdx, sheetDate, skippedCols) {
+  if (!sheetDate) return 0;
+  const header = rows[doHeaderIdx];
+  const colMap = header.map((h) => {
+    const label = String(h || '').trim();
+    if (!label) return null;
+    if (/^time$/i.test(label)) return { special: 'time' };
+    const m = label.match(/^LT\s*(\d{1,2})$/i);
+    if (m) return { tank: `LT${m[1]}`, param: 'DO (ppm)' };
+    skippedCols.add(`[DO block] ${label}`);
+    return null;
+  });
+  const timeColIdx = colMap.findIndex(c => c && c.special === 'time');
+  if (timeColIdx === -1) return 0;
+
+  let imported = 0;
+  for (let r = doHeaderIdx + 1; r < rows.length; r++) {
+    const row = rows[r];
+    const hhmm = timeToHHMM(row[timeColIdx]);
+    if (!hhmm) continue;
+
+    const values = { Date: sheetDate, Time: hhmm };
+    let any = false;
+    colMap.forEach((c, i) => {
+      if (!c || !c.tank) return;
+      const raw = row[i];
+      if (raw === '' || raw === null || raw === undefined) return;
+      const key = `${c.tank} ${c.param}`;
+      if (LEACH_HEADER_SET.has(key)) { values[key] = raw; any = true; }
+      else skippedCols.add(key);
+    });
+    if (!any) continue;
+
+    await db.appendRow(SH.LEACHING, toWideRow(values));
+    imported++;
+  }
+  return imported;
+}
+
+/**
  * Some day-sheets (a Sept layout with Shift/Operator columns) never put a
  * date in any cell — only the sheet's own tab name ("04.09") encodes
  * day/month, with no year. Build a month -> year map from whichever sheets
@@ -145,6 +201,14 @@ async function processWorkbook(filePath, skippedCols, opts = {}) {
 
       await db.appendRow(SH.LEACHING, toWideRow(values));
       rowsImported++;
+    }
+
+    // Some sheets carry a second "DO (ppm)" mini-table further down with
+    // its own header/Time column — it belongs to this same sheet's date.
+    const doHeaderIdx = findDoBlockHeaderIndex(rows);
+    if (doHeaderIdx !== -1) {
+      const sheetDate = currentDate || (usedFallback ? fallbackDate : null);
+      rowsImported += await processDoBlock(rows, doHeaderIdx, sheetDate, skippedCols);
     }
 
     if (usedFallback) undatedSheets.push(`${sheetName} -> ${fallbackDate} (year ${fallbackDate === null ? '?' : monthToYear[month.padStart(2,'0')] ? 'inferred from sibling sheet' : '--year flag'})`);
