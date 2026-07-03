@@ -573,7 +573,17 @@ function renderDetailData(activeKey, data) {
   // profile, all-tanks trend); every other section gets the single
   // customizable Production Trend chart.
   const showProdTrend = activeKey !== 'leaching';
-  content.innerHTML = subTabsHtml() + renderSection(data) + (showProdTrend ? productionTrendBlockHtml() : '');
+  content.innerHTML = subTabsHtml() + renderSection(data);
+
+  if (showProdTrend) {
+    // Insert right after the KPI row (or right after the sub-tabs/heatmap
+    // area if a section has no KPI row) so the chart sits near the top,
+    // above tables/stoppages/chemical strips — not buried at the bottom.
+    const kpiRow = content.querySelector('.kpi-row-2, .kpi-row-3');
+    const anchor = kpiRow || content.querySelector('.sub-tabs') || content.firstElementChild;
+    if (anchor) anchor.insertAdjacentHTML('afterend', productionTrendBlockHtml());
+    else content.insertAdjacentHTML('afterbegin', productionTrendBlockHtml());
+  }
 
   // Build charts after DOM settles
   setTimeout(() => {
@@ -1050,7 +1060,7 @@ function loadTrendSeries(sectionKey, data) {
   // (or the first chartable parameter if there's no literal "Production").
   const chartable = _chartableParams(data);
   const prod = chartable.find(p => p.key === 'Production') || chartable[0];
-  return prod ? [{ id: 'default', paramKey: prod.key, type: 'bar' }] : [];
+  return prod ? [{ id: 'default', paramKey: prod.key, type: 'bar', color: TREND_PALETTE[0] }] : [];
 }
 
 function saveTrendSeries(sectionKey, series) {
@@ -1098,7 +1108,7 @@ function buildProductionTrendChart(sectionKey, data) {
     const unit = p.unit || '—';
     if (!(unit in unitToAxis)) unitToAxis[unit] = 'y' + Object.keys(unitToAxis).length;
     const axisId = unitToAxis[unit];
-    const color = TREND_PALETTE[i % TREND_PALETTE.length];
+    const color = s.color || TREND_PALETTE[i % TREND_PALETTE.length];
     const values = rows.map(r => { const v = parseFloat(r[s.paramKey]); return isNaN(v) ? null : v; });
     const label = p.label + (p.unit ? ` (${p.unit})` : '');
 
@@ -1157,11 +1167,13 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   const series = loadTrendSeries(sectionKey, STATE.lastSectionData);
   const list = document.getElementById('cc-series-list');
 
-  list.innerHTML = series.length ? series.map(s => {
+  list.innerHTML = series.length ? series.map((s, i) => {
     const p = paramsByKey[s.paramKey];
     if (!p) return '';
+    const color = s.color || TREND_PALETTE[i % TREND_PALETTE.length];
     return `
       <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">
+        <input type="color" value="${color}" title="Chart color" style="width:28px;height:28px;padding:0;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;flex-shrink:0" onchange="changeTrendSeriesColor('${s.id}', this.value)">
         <span style="flex:1;font-size:13px">${p.label}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">(${p.unit})</span>` : ''}</span>
         <select class="filter-input" onchange="changeTrendSeriesType('${s.id}', this.value)">
           <option value="bar"     ${s.type==='bar'?'selected':''}>Bar</option>
@@ -1184,6 +1196,7 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
     addSel.disabled = true; addBtn.disabled = true;
     addSel.innerHTML = '<option>All parameters added</option>';
   }
+  document.getElementById('cc-add-color').value = TREND_PALETTE[series.length % TREND_PALETTE.length];
 }
 
 function addTrendSeries() {
@@ -1191,10 +1204,11 @@ function addTrendSeries() {
   const data = STATE.lastSectionData;
   const paramKey = document.getElementById('cc-add-param').value;
   const type = document.getElementById('cc-add-type').value;
+  const color = document.getElementById('cc-add-color').value;
   if (!paramKey) return;
 
   const series = loadTrendSeries(sectionKey, data);
-  series.push({ id: 'series_' + Date.now(), paramKey, type });
+  series.push({ id: 'series_' + Date.now(), paramKey, type, color });
   saveTrendSeries(sectionKey, series);
 
   const paramsByKey = {};
@@ -1209,6 +1223,16 @@ function changeTrendSeriesType(seriesId, type) {
   const series = loadTrendSeries(sectionKey, data);
   const s = series.find(x => x.id === seriesId);
   if (s) s.type = type;
+  saveTrendSeries(sectionKey, series);
+  buildProductionTrendChart(sectionKey, data);
+}
+
+function changeTrendSeriesColor(seriesId, color) {
+  const sectionKey = STATE._trendSectionKey;
+  const data = STATE.lastSectionData;
+  const series = loadTrendSeries(sectionKey, data);
+  const s = series.find(x => x.id === seriesId);
+  if (s) s.color = color;
   saveTrendSeries(sectionKey, series);
   buildProductionTrendChart(sectionKey, data);
 }
