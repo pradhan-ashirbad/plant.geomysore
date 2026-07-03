@@ -4,6 +4,7 @@ const { query } = require('./pool');
 const { DB_START, SH, SHEET_PARAMS } = require('./config');
 const { headersFor, parseDateValue } = require('./sheetUtils');
 const typed = require('./typedTables');
+const leaching = require('./leachingStore');
 
 // ─── HEADERS (generic sheet_rows sheets only — typed sheets use typedTables) ──
 
@@ -53,6 +54,7 @@ function _entryDateFromRow(headers, rowArray) {
  * Returns all rows for a sheet as array-of-arrays, in insertion order.
  */
 async function getSheet(sheetName) {
+  if (leaching.isLeaching(sheetName)) return leaching.getRows(sheetName);
   if (typed.isTyped(sheetName)) return typed.getRows(sheetName);
 
   const res = await query(
@@ -68,6 +70,7 @@ async function getSheet(sheetName) {
  * Rows whose entry_date could not be parsed are excluded when a filter is set.
  */
 async function getSheetByDate(sheetName, filter = {}) {
+  if (leaching.isLeaching(sheetName)) return leaching.getRowsByDate(sheetName, filter);
   if (typed.isTyped(sheetName)) return typed.getRowsByDate(sheetName, filter);
 
   const { date, month, from, to } = filter;
@@ -97,6 +100,7 @@ async function getSheetByDate(sheetName, filter = {}) {
  * Returns the header row as an array.
  */
 async function getSheetHeaders(sheetName) {
+  if (leaching.isLeaching(sheetName)) return leaching.getHeaders(sheetName);
   if (typed.isTyped(sheetName)) return typed.getHeaders(sheetName);
   return _ensureHeaders(sheetName);
 }
@@ -114,6 +118,7 @@ async function getSheetFull(sheetName) {
  * Appends a row to the sheet, extracting entry_date for indexed filtering.
  */
 async function appendRow(sheetName, rowArray) {
+  if (leaching.isLeaching(sheetName)) return leaching.appendRow(sheetName, rowArray);
   if (typed.isTyped(sheetName)) return typed.appendRow(sheetName, rowArray);
 
   const headers = await _ensureHeaders(sheetName);
@@ -129,6 +134,7 @@ async function appendRow(sheetName, rowArray) {
  * (DB_START + index within getSheet's result order).
  */
 async function updateRow(sheetName, rowNum, rowArray) {
+  if (leaching.isLeaching(sheetName)) return leaching.updateRow(sheetName, rowNum, rowArray);
   if (typed.isTyped(sheetName)) return typed.updateRow(sheetName, rowNum, rowArray);
 
   const offset = rowNum - DB_START;
@@ -161,6 +167,7 @@ async function updateCell(sheetName, row, col, value) {
  * Deletes every row in a sheet (used by the "replace" import mode).
  */
 async function deleteAllRows(sheetName) {
+  if (leaching.isLeaching(sheetName)) return leaching.deleteAllRows(sheetName);
   if (typed.isTyped(sheetName)) return typed.deleteAllRows(sheetName);
   await query('DELETE FROM sheet_rows WHERE sheet_name = $1', [sheetName]);
 }

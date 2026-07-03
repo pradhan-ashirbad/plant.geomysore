@@ -734,13 +734,12 @@ function switchLeachParam(param) {
 
 function renderLeachingHeatmap(data, param) {
   const LT_TANKS = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
-  const DT_TANKS = ['DT1','DT4'];
+  const DT_TANKS = ['DT1','DT2','DT3','DT4'];
   const paramKeyMap = {
     nacn: t => `${t} NaCN (ppm)`,
     ph:   t => `${t} pH`,
     au:   t => `${t} Au in Liquor (ppm)`,
     do:   t => `${t} DO (ppm)`,
-    cn:   t => `${t} CN (ppm)`,
   };
   const rows = data.rows || [];
   if (!rows.length) return '<div class="nodata">No data</div>';
@@ -764,11 +763,9 @@ function renderLeachingHeatmap(data, param) {
   });
 
   if (param === 'nacn' || param === 'ph' || param === 'au') {
-    const dtParamMap = { nacn: 'cn', ph: 'ph', au: 'au' };
     html += `<tr class="hm-section-sep"><td colspan="${timeLabels.length+1}">Discharge Tanks</td></tr>`;
     DT_TANKS.forEach(tank => {
-      const dpKey = dtParamMap[param] || param;
-      const key = dpKey === 'cn' ? `${tank} CN (ppm)` : dpKey === 'ph' ? `${tank} pH` : `${tank} Au in Liquor (ppm)`;
+      const key = param === 'nacn' ? `${tank} NaCN (ppm)` : param === 'ph' ? `${tank} pH` : `${tank} Au in Liquor (ppm)`;
       html += `<tr><td class="hm-tank-label hm-dt-header">${tank}</td>`;
       showRows.forEach(row => {
         const v = row[key];
@@ -1397,7 +1394,7 @@ function _drillClickHandler(data, isMonth) {
 }
 
 const LEACH_LT_TANKS = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
-const LEACH_DT_TANKS = ['DT1','DT4'];
+const LEACH_DT_TANKS = ['DT1','DT2','DT3','DT4'];
 
 const LEACH_TANK_COLORS = {
   LT4: '#C0392B', LT5: '#2471A3', LT6: '#1A7A4A', LT7: '#B7950B',
@@ -1449,13 +1446,13 @@ function buildLeachTankProfile(data, param) {
     au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
   };
   const dtKeyMap = {
-    nacn: t => `${t} CN (ppm)`, ph: t => `${t} pH`, au: t => `${t} Au in Liquor (ppm)`,
+    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`, au: t => `${t} Au in Liquor (ppm)`,
   };
   const btnLabel = document.querySelector(`#lhm-btn-${param}`) ? document.querySelector(`#lhm-btn-${param}`).textContent : param;
   const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
   buildTankProfileChart('chart-leach-tankprofile', latest, LEACH_LT_TANKS, keyFn, btnLabel);
 
-  // DT tanks only make sense for nacn(→CN)/au/ph, same as the heatmap logic
+  // DT tanks only make sense for nacn/au/ph, same as the heatmap logic
   const dtWrap = document.getElementById('leach-tankprofile-dt-wrap');
   if (dtKeyMap[param]) {
     if (dtWrap) dtWrap.style.display = '';

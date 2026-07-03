@@ -28,7 +28,7 @@ const SH = {
 };
 
 const LT_TANKS       = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
-const DT_TANKS       = ['DT1','DT4'];
+const DT_TANKS       = ['DT1','DT2','DT3','DT4'];
 const AU_LIMIT_TANKS = ['LT9','LT10','DT1','DT2','DT3','DT4'];
 const CARBON_TANKS   = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
 
@@ -155,7 +155,7 @@ function _buildLeachingParams() {
     params.push({ key: `${t} Overflow`,         label: 'Overflow',      unit: '',    tank: t, tankGroup: 'Leach', isOverflow: true });
   });
   DT_TANKS.forEach(t => {
-    params.push({ key: `${t} CN (ppm)`,         label: 'CN',            unit: 'ppm', tank: t, tankGroup: 'Discharge' });
+    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Discharge' });
     params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Discharge' });
     params.push({ key: `${t} Au in Liquor (ppm)`, label: 'Au in Liquor', unit: 'ppm', tank: t, tankGroup: 'Discharge', limitId: `DT_AU_${t}` });
   });
