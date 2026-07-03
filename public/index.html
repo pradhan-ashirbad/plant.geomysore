@@ -120,6 +120,7 @@
           </label>
           <button onclick="loadDetail(true)" class="btn-apply">Go</button>
           <button onclick="exportSection()" class="btn-export" title="Download as Excel">⬇ Excel</button>
+          <button onclick="openChartCustomizer()" class="btn-export" title="Choose which parameters to chart">⚙ Customize</button>
         </div>
       </div>
       <div id="det-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
@@ -388,6 +389,21 @@
     <div class="modal-footer">
       <button class="btn-cancel" onclick="closeModal('user')">Cancel</button>
       <button class="submit-btn" onclick="saveUser()" style="width:auto;padding:8px 24px">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Chart customization modal -->
+<div id="modal-chart-customize" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('chart-customize')">
+  <div class="modal-box" style="max-width:540px">
+    <div class="modal-title">Customize Charts</div>
+    <div style="font-size:12px;color:var(--txt3);margin-bottom:12px">
+      Pick which parameters get a chart on this page, and how each one should be drawn.
+    </div>
+    <div id="cc-param-list" style="max-height:400px;overflow-y:auto"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('chart-customize')">Cancel</button>
+      <button class="submit-btn" onclick="saveChartCustomization()" style="width:auto;padding:8px 24px">Save</button>
     </div>
   </div>
 </div>

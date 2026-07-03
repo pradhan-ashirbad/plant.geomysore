@@ -215,6 +215,11 @@ function _computeAutoCalc(sheetName, colMap, rowArray) {
     const grade = get('Au Grade (g/t)');
     if (!isNaN(mass) && !isNaN(grade)) set('Au Content (g)', +(mass * grade / 1000).toFixed(2));
   }
+  if (sheetName === SH.GOLD) {
+    const mass   = get('Dore Mass (g)');
+    const purity = get('Purity (%)');
+    if (!isNaN(mass) && !isNaN(purity)) set('Au Content (g)', +(mass * purity / 100).toFixed(2));
+  }
   if (sheetName === SH.ILS) {
     const feed = get('Feed Au (ppm)');
     const raff = get('Raffinate Au (ppm)');
@@ -664,9 +669,27 @@ async function submitData(payload, sheets) {
 
   // Auto-calc
   _computeAutoCalc(sheet, colMap, rowArray);
+  if (sheet === SH.GOLD) await _computeGoldCumulative(sheets, colMap, rowArray);
 
   await sheets.appendRow(sheet, rowArray);
   return { success: true };
+}
+
+/**
+ * Gold's Cumulative (g) is a running total across all entries, so unlike
+ * the other auto-calc fields it needs the sheet's existing history, not
+ * just the current row — computed separately since _computeAutoCalc is
+ * synchronous. Assumes entries are submitted in chronological order.
+ */
+async function _computeGoldCumulative(sheets, colMap, rowArray) {
+  const auIdx  = findColIndex(colMap, 'Au Content (g)');
+  const cumIdx = findColIndex(colMap, 'Cumulative (g)');
+  if (auIdx < 0 || cumIdx < 0) return;
+
+  const thisAu = parseFloat(rowArray[auIdx]) || 0;
+  const existingRows = await sheets.getSheet(SH.GOLD);
+  const priorTotal = existingRows.reduce((sum, r) => sum + (parseFloat(r[auIdx]) || 0), 0);
+  rowArray[cumIdx] = +(priorTotal + thisAu).toFixed(2);
 }
 
 // ─── PARAMETER CATALOG ────────────────────────────────────────────────────────

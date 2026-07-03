@@ -574,10 +574,10 @@ function renderDetailData(activeKey, data) {
     return;
   }
 
-  content.innerHTML = subTabsHtml() + renderSection(data);
+  content.innerHTML = subTabsHtml() + renderSection(data) + customChartsBlockHtml();
 
   // Build charts after DOM settles
-  setTimeout(() => buildSectionCharts(data), 60);
+  setTimeout(() => { buildSectionCharts(data); buildCustomCharts(activeKey, data); }, 60);
 }
 
 // ─── SECTION RENDERER ─────────────────────────────────────────────────────────
@@ -1095,45 +1095,182 @@ function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
     },
   });
 
-  attachChartToolbar(canvasId, !!zoomConfig);
+}
+
+// ─── CUSTOM CHARTS (user-picked parameters + chart type) ──────────────────────
+// Lets a user choose, per section/sub-tab, which numeric parameters get a
+// chart and what kind (Line/Bar/Area/Pie). Preferences persist per browser
+// via localStorage, keyed by the sub-section (e.g. 'crushing', 'cyclone').
+
+function _chartPrefsKey(sectionKey) {
+  return 'chartPrefs:' + sectionKey;
+}
+
+function loadChartPrefs(sectionKey) {
+  try {
+    const raw = localStorage.getItem(_chartPrefsKey(sectionKey));
+    return raw ? JSON.parse(raw) : {};
+  } catch (e) { return {}; }
+}
+
+function saveChartPrefsFor(sectionKey, prefs) {
+  try { localStorage.setItem(_chartPrefsKey(sectionKey), JSON.stringify(prefs)); } catch (e) { /* storage unavailable */ }
+}
+
+// Numeric, chartable parameters for a section (excludes text/time/select —
+// autoCalc fields like TPH are included since they're still numeric).
+function _chartableParams(data) {
+  return (data.params || []).filter(p => !p.isText && !p.isTime && !p.isSelect);
+}
+
+function customChartsBlockHtml() {
+  return `
+    <div class="section-block" id="custom-charts-block" style="display:none">
+      <div class="section-block-title">Custom Charts</div>
+      <div id="custom-charts-list" style="display:flex;flex-direction:column;gap:14px"></div>
+    </div>`;
+}
+
+function openChartCustomizer() {
+  const data = STATE.lastSectionData;
+  const sectionKey = STATE.currentSubSec || STATE.currentSec;
+  if (!data) { showToast('Open a section first', 'error'); return; }
+
+  const params = _chartableParams(data);
+  const prefs = loadChartPrefs(sectionKey);
+  const safe = k => k.replace(/[^a-zA-Z0-9]/g, '_');
+
+  const list = document.getElementById('cc-param-list');
+  if (!params.length) {
+    list.innerHTML = '<div class="nodata">No numeric parameters available to chart.</div>';
+  } else {
+    list.innerHTML = params.map(p => {
+      const pref = prefs[p.key] || { show: false, type: 'line' };
+      const id = safe(p.key);
+      return `
+        <div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--bdr)">
+          <input type="checkbox" id="cc-show-${id}" ${pref.show ? 'checked' : ''}>
+          <label style="flex:1;font-size:13px;cursor:pointer" for="cc-show-${id}">
+            ${p.label}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">${p.unit}</span>` : ''}
+          </label>
+          <select id="cc-type-${id}" class="filter-input">
+            <option value="line" ${pref.type === 'line' ? 'selected' : ''}>Line</option>
+            <option value="bar"  ${pref.type === 'bar'  ? 'selected' : ''}>Bar</option>
+            <option value="area" ${pref.type === 'area' ? 'selected' : ''}>Area</option>
+            <option value="pie"  ${pref.type === 'pie'  ? 'selected' : ''}>Pie</option>
+          </select>
+        </div>`;
+    }).join('');
+  }
+
+  STATE._ccParams = params; // remember for save
+  document.getElementById('modal-chart-customize').classList.remove('hidden');
+}
+
+function saveChartCustomization() {
+  const sectionKey = STATE.currentSubSec || STATE.currentSec;
+  const params = STATE._ccParams || [];
+  const safe = k => k.replace(/[^a-zA-Z0-9]/g, '_');
+
+  const prefs = {};
+  params.forEach(p => {
+    const id = safe(p.key);
+    const showEl = document.getElementById('cc-show-' + id);
+    const typeEl = document.getElementById('cc-type-' + id);
+    if (showEl && showEl.checked) prefs[p.key] = { show: true, type: typeEl.value };
+  });
+
+  saveChartPrefsFor(sectionKey, prefs);
+  closeModal('chart-customize');
+  showToast('Chart preferences saved');
+  if (STATE.lastSectionData) buildCustomCharts(sectionKey, STATE.lastSectionData);
+}
+
+function buildCustomCharts(sectionKey, data) {
+  const container = document.getElementById('custom-charts-list');
+  const block = document.getElementById('custom-charts-block');
+  if (!container || !block) return;
+
+  const prefs = loadChartPrefs(sectionKey);
+  const selected = _chartableParams(data).filter(p => prefs[p.key] && prefs[p.key].show);
+
+  if (!selected.length) {
+    block.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  block.style.display = '';
+
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
+  const labels = rows.map(r => r.__date || r.__time || '');
+
+  container.innerHTML = selected.map(p => `
+    <div>
+      <div style="font-size:12px;font-weight:600;color:var(--txt2);margin-bottom:6px">${p.label}${p.unit ? ` (${p.unit})` : ''}</div>
+      <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-custom-${p.key.replace(/[^a-zA-Z0-9]/g, '_')}"></canvas></div>
+    </div>`).join('');
+
+  selected.forEach(p => {
+    const canvasId = 'chart-custom-' + p.key.replace(/[^a-zA-Z0-9]/g, '_');
+    const values = rows.map(r => { const v = parseFloat(r[p.key]); return isNaN(v) ? null : v; });
+    const type = prefs[p.key].type;
+    buildCustomChart(canvasId, p.label, labels, values, type);
+  });
 }
 
 /**
- * Adds a small floating toolbar (⟲ reset zoom, ⬇ PNG) to a chart's
- * canvas wrapper. Idempotent — safe to call every time a chart rebuilds.
+ * Builds a single-series chart of any of the four user-facing types.
+ * Pie/doughnut charts skip cartesian scales entirely (categorical slices).
  */
-function attachChartToolbar(canvasId, showZoomReset) {
+function buildCustomChart(canvasId, label, labels, values, type) {
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
-  const wrap = canvas.closest('.chart-canvas-wrap');
-  if (!wrap) return;
-  wrap.style.position = 'relative';
-
-  let bar = wrap.querySelector('.chart-toolbar');
-  if (!bar) {
-    bar = document.createElement('div');
-    bar.className = 'chart-toolbar';
-    wrap.appendChild(bar);
+  if (STATE.charts[canvasId]) {
+    try { STATE.charts[canvasId].destroy(); } catch (e) {}
+    delete STATE.charts[canvasId];
   }
-  bar.innerHTML = `
-    ${showZoomReset ? `<button class="chart-tool-btn" title="Reset zoom" onclick="resetChartZoom('${canvasId}')">⟲</button>` : ''}
-    <button class="chart-tool-btn" title="Download PNG" onclick="downloadChartPng('${canvasId}')">⬇</button>`;
-}
+  if (typeof Chart === 'undefined') return;
 
-function resetChartZoom(canvasId) {
-  const chart = STATE.charts[canvasId];
-  if (chart && typeof chart.resetZoom === 'function') chart.resetZoom();
-}
+  const PALETTE = ['#7B1E2E','#B8860B','#2471A3','#1A7A4A','#7D3C98','#C0392B','#D35400','#16A085'];
 
-function downloadChartPng(canvasId) {
-  const chart = STATE.charts[canvasId];
-  if (!chart) return;
-  const a = document.createElement('a');
-  a.href = chart.toBase64Image();
-  a.download = canvasId.replace(/^chart-/, '') + '.png';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
+  if (type === 'pie') {
+    STATE.charts[canvasId] = new Chart(canvas, {
+      type: 'pie',
+      data: {
+        labels,
+        datasets: [{ label, data: values.map(v => v === null ? 0 : v), backgroundColor: labels.map((_, i) => PALETTE[i % PALETTE.length]) }],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: 'bottom', labels: { boxWidth: 10, font: { size: 9 } } } },
+      },
+    });
+    return;
+  }
+
+  const isArea = type === 'area';
+  const chartType = isArea ? 'line' : type; // 'area' is a filled line
+  STATE.charts[canvasId] = new Chart(canvas, {
+    type: chartType,
+    data: {
+      labels,
+      datasets: [{
+        label, data: values,
+        borderColor: '#7B1E2E',
+        backgroundColor: chartType === 'bar' ? 'rgba(123,30,46,.65)' : (isArea ? 'rgba(123,30,46,.15)' : 'transparent'),
+        fill: isArea, tension: .3, pointRadius: chartType === 'line' ? 2 : 0, borderWidth: 1.75,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } },
+        y: { beginAtZero: false, grid: { color: 'rgba(0,0,0,.05)' }, ticks: { font: { size: 10 } } },
+      },
+    },
+  });
 }
 
 function buildSectionCharts(data) {
