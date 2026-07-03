@@ -630,18 +630,23 @@ function renderCrushing(data) {
   });
   const avgTph = tphVals.length ? (tphVals.reduce((a,b)=>a+b,0)/tphVals.length) : 0;
 
+  // Production's KPI shows up merged into the target-progress card instead
+  // of as a plain tile when a target is set for it.
+  const hasProdTarget = !!(data.targetProgress || {})['Production'];
+
   return `
-    <div class="kpi-row-3">
+    <div class="${hasProdTarget ? 'kpi-row-2' : 'kpi-row-3'}">
       <div class="kpi-tile">
         <div class="kpi-label">Running Hours</div>
         <div class="kpi-val">${fmt(totalHrs,1)}</div>
         <div class="kpi-unit">hrs</div>
       </div>
+      ${!hasProdTarget ? `
       <div class="kpi-tile">
         <div class="kpi-label">Production</div>
         <div class="kpi-val gold">${fmt(totalProd,0)}</div>
         <div class="kpi-unit">tonnes</div>
-      </div>
+      </div>` : ''}
       <div class="kpi-tile">
         <div class="kpi-label">Avg TPH</div>
         <div class="kpi-val">${fmt(avgTph,1)}</div>
@@ -664,19 +669,21 @@ function renderMilling(data) {
     if (!isNaN(fg)) fgVals.push(fg);
   });
   const avgFG = fgVals.length ? (fgVals.reduce((a,b)=>a+b,0)/fgVals.length) : 0;
+  const hasProdTarget = !!(data.targetProgress || {})['Production'];
 
   return `
-    <div class="kpi-row-3">
+    <div class="${hasProdTarget ? 'kpi-row-2' : 'kpi-row-3'}">
       <div class="kpi-tile">
         <div class="kpi-label">Running Hours</div>
         <div class="kpi-val">${fmt(totalHrs,1)}</div>
         <div class="kpi-unit">hrs</div>
       </div>
+      ${!hasProdTarget ? `
       <div class="kpi-tile">
         <div class="kpi-label">Production</div>
         <div class="kpi-val gold">${fmt(totalProd,0)}</div>
         <div class="kpi-unit">tonnes</div>
-      </div>
+      </div>` : ''}
       <div class="kpi-tile">
         <div class="kpi-label">Avg Feed Grade</div>
         <div class="kpi-val">${fmt(avgFG,2)}</div>
@@ -840,18 +847,21 @@ function renderGold(data) {
     totalAu   += parseFloat(r['Au Content (g)']) || 0;
   });
 
+  const hasAuTarget = !!(data.targetProgress || {})['Au Content (g)'];
+
   return `
-    <div class="kpi-row-2">
+    <div class="${hasAuTarget ? 'kpi-row-1' : 'kpi-row-2'}">
       <div class="kpi-tile" style="--kpi-color:var(--gold)">
         <div class="kpi-label">Total Dore Mass</div>
         <div class="kpi-val gold">${fmt(totalMass,1)}</div>
         <div class="kpi-unit">g</div>
       </div>
+      ${!hasAuTarget ? `
       <div class="kpi-tile" style="--kpi-color:var(--gold)">
         <div class="kpi-label">Total Au Content</div>
         <div class="kpi-val gold">${fmt(totalAu,1)}</div>
         <div class="kpi-unit">g</div>
-      </div>
+      </div>` : ''}
     </div>
     ${genericTableHtml(data)}`;
 }
@@ -1076,13 +1086,20 @@ function saveTrendSeries(sectionKey, series) {
 
 // hexColor is a real canvas-usable color (CSS custom properties can't be used
 // as canvas fillStyle directly); cssColor is for HTML/inline-style contexts.
+// Colors follow the requested rule: green = on/above target, yellow = 80-99%
+// of expected, red = below 80% of expected.
 const TARGET_STATUS_META = {
-  AHEAD:    { label: '▲ Ahead of Target', cssColor: 'var(--ok)',   hexColor: '#1A7A4A', pill: 'ok'   },
-  ON_TRACK: { label: '✓ On Track',        cssColor: 'var(--ok)',   hexColor: '#1A7A4A', pill: 'ok'   },
-  BEHIND:   { label: '▼ Behind Target',   cssColor: 'var(--crit)', hexColor: '#B91C1C', pill: 'crit' },
-  NO_DATA:  { label: 'No data yet',       cssColor: 'var(--txt3)', hexColor: '#888580', pill: 'none' },
+  ON_TARGET: { hexColor: '#1A7A4A' },
+  WARNING:   { hexColor: '#B45309' },
+  BEHIND:    { hexColor: '#B91C1C' },
+  NO_DATA:   { hexColor: '#888580' },
 };
 
+/**
+ * One compact card per targeted parameter: title/cumulative/unit on the
+ * left, a half-circle gauge with % in the center, and (month view only)
+ * Monthly Target / Current Rate / Required Rate stacked on the right.
+ */
 function targetProgressBlockHtml(data) {
   const progress = data.targetProgress || {};
   const keys = Object.keys(progress);
@@ -1094,49 +1111,39 @@ function targetProgressBlockHtml(data) {
   return keys.map(paramKey => {
     const tp = progress[paramKey];
     const p = paramsByKey[paramKey] || { label: paramKey, unit: '' };
-    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TRACK;
+    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TARGET;
     const safe = paramKey.replace(/[^a-zA-Z0-9]/g, '_');
-    const gaugePct = Math.max(0, Math.min(100, tp.pctAchieved));
-    const expectedPct = tp.mode === 'month' && tp.monthlyTarget
-      ? Math.max(0, Math.min(100, (tp.expected / tp.monthlyTarget) * 100))
-      : null;
     const unit = p.unit || '';
-    const varSign = tp.variance > 0 ? '+' : '';
+    const isMonth = tp.mode === 'month';
 
     return `
-    <div class="chart-wrap target-card">
-      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
-        <div class="chart-title">${p.label} — Target Progress${tp.mode === 'date' ? ' (Today)' : ' (Month)'}</div>
-        <span class="pill pill-${meta.pill}">${meta.label}</span>
-      </div>
-      <div class="target-gauge-wrap">
-        <canvas id="chart-target-gauge-${safe}"></canvas>
-        <div class="target-gauge-pct">${fmt(tp.pctAchieved,0)}%</div>
-        <div class="target-gauge-sub">of ${tp.mode === 'month' ? 'monthly' : 'daily'} target</div>
-      </div>
-      <div class="target-bar-wrap">
-        <div class="target-bar-track">
-          <div class="target-bar-fill" style="width:${gaugePct}%;background:${meta.cssColor}"></div>
-          ${expectedPct !== null ? `<div class="target-bar-expected-tick" style="left:${expectedPct}%" title="Expected to date: ${fmt(tp.expected,0)} ${unit}"></div>` : ''}
+    <div class="chart-wrap kpi-target-card">
+      <div class="kpi-target-grid">
+        <div class="kpi-target-left">
+          <div class="kpi-label">${p.label.toUpperCase()}</div>
+          <div class="kpi-val gold">${fmt(tp.actual,0)}</div>
+          <div class="kpi-unit">${unit}</div>
         </div>
-        <div class="target-bar-labels">
-          <span>${fmt(tp.actual,0)} ${unit} achieved</span>
-          <span>${fmt(tp.mode === 'month' ? tp.monthlyTarget : tp.target,0)} ${unit} target</span>
+        <div class="kpi-target-center">
+          <div class="target-gauge-wrap">
+            <canvas id="chart-target-gauge-${safe}"></canvas>
+            <div class="target-gauge-pct">${fmt(tp.pctAchieved,0)}%</div>
+          </div>
         </div>
-      </div>
-      <div class="target-stats-row">
-        <div class="target-stat">
-          <div class="target-stat-val" style="color:${tp.variance >= 0 ? 'var(--ok)' : 'var(--crit)'}">${varSign}${fmt(tp.variance,0)}</div>
-          <div class="target-stat-lbl">Variance (${unit})</div>
-        </div>
-        ${tp.mode === 'month' ? `
-        <div class="target-stat">
-          <div class="target-stat-val">${fmt(tp.projected,0)}</div>
-          <div class="target-stat-lbl">Projected Month-End</div>
-        </div>
-        <div class="target-stat">
-          <div class="target-stat-val">${tp.daysElapsed}/${tp.daysInMonth}</div>
-          <div class="target-stat-lbl">Days Elapsed</div>
+        ${isMonth ? `
+        <div class="kpi-target-right">
+          <div class="kpi-target-stat">
+            <span class="kpi-target-stat-lbl">Monthly Target</span>
+            <span class="kpi-target-stat-val">${fmt(tp.monthlyTarget,0)} ${unit}</span>
+          </div>
+          <div class="kpi-target-stat">
+            <span class="kpi-target-stat-lbl">Current Rate</span>
+            <span class="kpi-target-stat-val">${fmt(tp.currentRate,0)} ${unit}/day</span>
+          </div>
+          <div class="kpi-target-stat">
+            <span class="kpi-target-stat-lbl">Required Rate</span>
+            <span class="kpi-target-stat-val">${tp.requiredRate !== null ? fmt(tp.requiredRate,0) + ' ' + unit + '/day' : '—'}</span>
+          </div>
         </div>` : ''}
       </div>
     </div>`;
@@ -1154,7 +1161,7 @@ function buildTargetGauges(data) {
     if (STATE.charts[canvasId]) { try { STATE.charts[canvasId].destroy(); } catch (e) {} delete STATE.charts[canvasId]; }
     if (typeof Chart === 'undefined') return;
 
-    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TRACK;
+    const meta = TARGET_STATUS_META[tp.status] || TARGET_STATUS_META.ON_TARGET;
     const achieved = Math.max(0, Math.min(100, tp.pctAchieved));
 
     STATE.charts[canvasId] = new Chart(canvas, {
@@ -1165,7 +1172,7 @@ function buildTargetGauges(data) {
       },
       options: {
         responsive: true, maintainAspectRatio: false,
-        circumference: 180, rotation: 270, cutout: '75%',
+        circumference: 180, rotation: 270, cutout: '72%',
         plugins: { legend: { display: false }, tooltip: { enabled: false } },
       },
     });

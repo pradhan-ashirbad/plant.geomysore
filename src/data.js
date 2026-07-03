@@ -577,13 +577,18 @@ async function getSectionData(payload, sheets) {
 }
 
 /**
- * Computes on-track/behind/ahead progress for every targeted parameter.
+ * Computes target-vs-actual progress for every targeted parameter.
  * - Date view: actual for that single day vs. the flat daily target
  *   (monthly target ÷ days in month).
  * - Month view: cumulative actual-so-far vs. expected-to-date (daily target
- *   × days elapsed), plus a run-rate projection for month-end.
+ *   × days elapsed), plus a run-rate projection for month-end and the
+ *   current/required daily rates needed to hit the target.
  * Range view is skipped — "expected pace" isn't well-defined over an
  * arbitrary date range, so the client hides the block in that mode.
+ *
+ * Status is based on actual ÷ expected-to-date (or ÷ daily target for a
+ * single day): >=100% is ON_TARGET (green), 80-99% is WARNING (yellow),
+ * below 80% is BEHIND (red).
  */
 function _computeTargetProgress(filter, rows, dailyRows, targets, targetMonth, targetDaysInMonth) {
   const progress = {};
@@ -601,13 +606,12 @@ function _computeTargetProgress(filter, rows, dailyRows, targets, targetMonth, t
         .filter(r => r.__date === filter.date)
         .reduce((s, r) => s + (parseFloat(r[paramKey]) || 0), 0);
       const variance = +(actual - dailyTarget).toFixed(2);
-      const variancePct = dailyTarget ? +((variance / dailyTarget) * 100).toFixed(1) : 0;
       progress[paramKey] = {
         mode: 'date',
         target: +dailyTarget.toFixed(2), actual: +actual.toFixed(2),
-        variance, variancePct,
+        variance,
         pctAchieved: dailyTarget ? +((actual / dailyTarget) * 100).toFixed(1) : 0,
-        status: _progressStatus(variancePct),
+        status: _progressStatus(dailyTarget ? actual / dailyTarget : 0),
       };
       return;
     }
@@ -627,26 +631,31 @@ function _computeTargetProgress(filter, rows, dailyRows, targets, targetMonth, t
     const actual = (dailyRows || []).reduce((s, r) => s + (parseFloat(r[paramKey + '__sum']) || 0), 0);
     const expected = +(dailyTarget * daysElapsed).toFixed(2);
     const variance = +(actual - expected).toFixed(2);
-    const variancePct = expected ? +((variance / expected) * 100).toFixed(1) : 0;
     const projected = daysElapsed > 0 ? +((actual / daysElapsed) * targetDaysInMonth).toFixed(2) : 0;
+
+    const currentRate = daysElapsed > 0 ? +(actual / daysElapsed).toFixed(2) : 0;
+    const daysRemaining = targetDaysInMonth - daysElapsed;
+    const requiredRate = daysRemaining > 0 ? +((monthlyTarget - actual) / daysRemaining).toFixed(2) : null;
 
     progress[paramKey] = {
       mode: 'month',
       monthlyTarget, dailyTarget: +dailyTarget.toFixed(2),
-      actual: +actual.toFixed(2), expected, variance, variancePct,
+      actual: +actual.toFixed(2), expected, variance,
       pctAchieved: +((actual / monthlyTarget) * 100).toFixed(1),
       projected, daysElapsed, daysInMonth: targetDaysInMonth,
-      status: daysElapsed === 0 ? 'NO_DATA' : _progressStatus(variancePct),
+      currentRate, requiredRate,
+      status: daysElapsed === 0 ? 'NO_DATA' : _progressStatus(expected ? actual / expected : 0),
     };
   });
 
   return progress;
 }
 
-function _progressStatus(variancePct) {
-  if (variancePct >= 3) return 'AHEAD';
-  if (variancePct <= -3) return 'BEHIND';
-  return 'ON_TRACK';
+// ratio = actual / expected-to-date (or actual / daily target for a single day)
+function _progressStatus(ratio) {
+  if (ratio >= 1) return 'ON_TARGET';
+  if (ratio >= 0.8) return 'WARNING';
+  return 'BEHIND';
 }
 
 // ─── ALERTS ───────────────────────────────────────────────────────────────────
