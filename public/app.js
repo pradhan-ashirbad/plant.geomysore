@@ -766,14 +766,9 @@ function renderLeaching(data) {
       </div>
       <div id="leach-heatmap-wrap">${renderLeachingHeatmap(data, leachParam)}</div>
     </div>
-    <div class="section-block">
-      <div class="section-block-title">Tank Profile — Latest Reading</div>
-      <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-leach-tankprofile"></canvas></div>
-      <div class="chart-canvas-wrap" id="leach-tankprofile-dt-wrap" style="height:160px;margin-top:8px"><canvas id="chart-leach-tankprofile-dt"></canvas></div>
-    </div>
     <div class="chart-wrap">
       <div class="chart-title" id="chart-leach-main-title">Leaching Trend — All Tanks</div>
-      <div class="chart-canvas-wrap" style="height:280px"><canvas id="chart-leach-main"></canvas></div>
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-leach-main"></canvas></div>
     </div>
     ${stoppagesHtml(data.stoppages)}`;
 }
@@ -786,7 +781,6 @@ function switchLeachParam(param) {
   if (btn) btn.classList.add('active');
   if (window._leachData) {
     document.getElementById('leach-heatmap-wrap').innerHTML = renderLeachingHeatmap(window._leachData, param);
-    buildLeachTankProfile(window._leachData, param);
     buildLeachMultiTankChart(window._leachData, param);
   }
 }
@@ -1462,7 +1456,6 @@ function buildSectionCharts(data) {
   if (key === 'leaching') {
     const param = STATE.leachHmParam || 'nacn';
     buildLeachMultiTankChart(data, param);
-    buildLeachTankProfile(data, param);
   }
 
   if (key === 'carbon') {
