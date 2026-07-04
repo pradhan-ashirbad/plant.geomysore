@@ -755,6 +755,11 @@ function renderMilling(data) {
 // ── Leaching ──────────────────────────────────────────────────────────────────
 function renderLeaching(data) {
   const leachParam = STATE.leachHmParam || 'nacn';
+  // Restore the "sync with heatmap" preference on first render this session.
+  if (STATE.leachFollowHeatmap === undefined) {
+    try { STATE.leachFollowHeatmap = localStorage.getItem('leachFollowHeatmap') === '1'; } catch (e) { STATE.leachFollowHeatmap = false; }
+  }
+  const synced = STATE.leachFollowHeatmap;
   return `
     <div class="section-block">
       <div class="section-block-title">Leaching Tank Heatmap</div>
@@ -766,7 +771,16 @@ function renderLeaching(data) {
       </div>
       <div id="leach-heatmap-wrap">${renderLeachingHeatmap(data, leachParam)}</div>
     </div>
-    ${productionTrendBlockHtml('Leaching Trend')}
+    <div class="chart-wrap">
+      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <div class="chart-title">Leaching Trend</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <button class="param-sel-btn ${synced?'active':''}" id="leach-follow-btn" onclick="toggleLeachFollow()" title="When on, this chart shows whichever parameter is selected in the heatmap above, for all tanks">🔗 ${synced?'Synced with heatmap':'Sync with heatmap'}</button>
+          <button class="chart-gear-btn" id="leach-trend-gear" style="opacity:${synced?'.35':'1'}" onclick="openTrendSeriesManager()" title="Add or edit chart parameters">⚙</button>
+        </div>
+      </div>
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-prod-trend"></canvas></div>
+    </div>
     ${stoppagesHtml(data.stoppages)}`;
 }
 
@@ -776,10 +790,12 @@ function switchLeachParam(param) {
   document.querySelectorAll('.param-sel-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('lhm-btn-' + param);
   if (btn) btn.classList.add('active');
-  // The selector only drives the heatmap now; the chart below has its own
-  // multi-series customizer (gear icon) independent of this parameter.
+  // The selector always drives the heatmap. It also drives the chart, but
+  // only when "Sync with heatmap" is on (otherwise the chart keeps the
+  // user's custom series).
   if (window._leachData) {
     document.getElementById('leach-heatmap-wrap').innerHTML = renderLeachingHeatmap(window._leachData, param);
+    if (STATE.leachFollowHeatmap) buildProductionTrendChart('leaching', window._leachData);
   }
 }
 
@@ -1314,6 +1330,33 @@ function productionTrendBlockHtml(title) {
 
 const TREND_PALETTE = ['#7B1E2E','#B8860B','#2471A3','#1A7A4A','#7D3C98','#C0392B','#D35400','#16A085'];
 
+// The series shown when "Sync with heatmap" is on: every leach tank's chosen
+// parameter as its own colored line.
+const _LEACH_PARAM_SUFFIX = { nacn: 'NaCN (ppm)', ph: 'pH', au: 'Au in Liquor (ppm)', do: 'DO (ppm)' };
+function _leachFollowSeries(param) {
+  const suffix = _LEACH_PARAM_SUFFIX[param] || _LEACH_PARAM_SUFFIX.nacn;
+  return LEACH_LT_TANKS.map((t, i) => ({
+    id: 'follow_' + t, paramKey: `${t} ${suffix}`, type: 'line',
+    color: LEACH_TANK_COLORS[t] || TREND_PALETTE[i % TREND_PALETTE.length],
+  }));
+}
+
+// Toggle for the Leaching Trend chart: follow the heatmap's parameter, or
+// keep the user's custom series. Persisted so it survives navigation.
+function toggleLeachFollow() {
+  STATE.leachFollowHeatmap = !STATE.leachFollowHeatmap;
+  try { localStorage.setItem('leachFollowHeatmap', STATE.leachFollowHeatmap ? '1' : '0'); } catch (e) { /* ignore */ }
+  const btn = document.getElementById('leach-follow-btn');
+  if (btn) {
+    btn.classList.toggle('active', STATE.leachFollowHeatmap);
+    btn.textContent = STATE.leachFollowHeatmap ? '🔗 Synced with heatmap' : '🔗 Sync with heatmap';
+  }
+  // The gear customizer is meaningless while synced — dim it.
+  const gear = document.getElementById('leach-trend-gear');
+  if (gear) gear.style.opacity = STATE.leachFollowHeatmap ? '.35' : '1';
+  if (window._leachData) buildProductionTrendChart('leaching', window._leachData);
+}
+
 function buildProductionTrendChart(sectionKey, data) {
   const canvasId = 'chart-prod-trend';
   const canvas = document.getElementById(canvasId);
@@ -1323,12 +1366,19 @@ function buildProductionTrendChart(sectionKey, data) {
     delete STATE.charts[canvasId];
   }
 
-  const series = loadTrendSeries(sectionKey, data);
+  // Leaching's "Sync with heatmap" toggle: when on, the chart follows the
+  // heatmap's parameter (all LT tanks of that parameter) instead of the
+  // user's saved custom series.
+  const series = (sectionKey === 'leaching' && STATE.leachFollowHeatmap)
+    ? _leachFollowSeries(STATE.leachHmParam || 'nacn')
+    : loadTrendSeries(sectionKey, data);
   if (!series.length || typeof Chart === 'undefined') return;
 
   const isMonth = data.isAggregate || STATE.detailMode !== 'date';
   const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
-  const labels = rows.map(r => r.__date || r.__time || '');
+  // Month/range → label by date; day → label by reading time (leaching has 6
+  // readings on one date, so labelling by date would repeat the same value).
+  const labels = rows.map(r => isMonth ? (r.__date || r.__time || '') : (r.__time || r.__date || ''));
   const paramsByKey = {};
   _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
 
@@ -1425,15 +1475,34 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   }).join('') : '<div class="nodata" style="padding:12px 0">No parameters on this chart yet.</div>';
 
   const usedKeys = new Set(series.map(s => s.paramKey));
-  const available = Object.values(paramsByKey).filter(p => !usedKeys.has(p.key));
-  const addSel = document.getElementById('cc-add-param');
-  const addBtn = document.getElementById('cc-add-btn');
-  if (available.length) {
-    addSel.disabled = false; addBtn.disabled = false;
-    addSel.innerHTML = available.map(p => `<option value="${p.key}">${_paramDisplayLabel(p)}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
+  const chartable = Object.values(paramsByKey);
+  const isTankBased = chartable.some(p => p.tank);
+  STATE._ccChartable = chartable;
+  STATE._ccUsedKeys = usedKeys;
+
+  const addSel   = document.getElementById('cc-add-param');
+  const addBtn   = document.getElementById('cc-add-btn');
+  const tankWrap = document.getElementById('cc-add-tank-wrap');
+
+  if (isTankBased) {
+    // Two-step picker: choose a parameter (NaCN/pH/…), then a tank (or all).
+    tankWrap.style.display = '';
+    const paramLabels = [];
+    chartable.forEach(p => { if (p.tank && !paramLabels.includes(p.label)) paramLabels.push(p.label); });
+    addSel.innerHTML = paramLabels.map(l => `<option value="${l}">${l}</option>`).join('');
+    addSel.disabled = false;
+    _ccRepopulateTanks();
   } else {
-    addSel.disabled = true; addBtn.disabled = true;
-    addSel.innerHTML = '<option>All parameters added</option>';
+    // Flat picker: one parameter per option (Crushing, Milling, …).
+    tankWrap.style.display = 'none';
+    const available = chartable.filter(p => !usedKeys.has(p.key));
+    if (available.length) {
+      addSel.disabled = false; addBtn.disabled = false;
+      addSel.innerHTML = available.map(p => `<option value="${p.key}">${_paramDisplayLabel(p)}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
+    } else {
+      addSel.disabled = true; addBtn.disabled = true;
+      addSel.innerHTML = '<option>All parameters added</option>';
+    }
   }
   document.getElementById('cc-add-color').value = TREND_PALETTE[series.length % TREND_PALETTE.length];
 
@@ -1445,16 +1514,57 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   if (ymax) ymax.value = yr.max !== null ? yr.max : '';
 }
 
+// Fill the Tank dropdown with the tanks that have the currently-selected
+// parameter and aren't already on the chart, plus an "All tanks" shortcut.
+function _ccRepopulateTanks() {
+  const tankSel = document.getElementById('cc-add-tank');
+  const addBtn = document.getElementById('cc-add-btn');
+  const chartable = STATE._ccChartable || [];
+  const used = STATE._ccUsedKeys || new Set();
+  if (!tankSel) return;
+  const paramLabel = document.getElementById('cc-add-param').value;
+  const opts = chartable.filter(p => p.label === paramLabel && p.tank && !used.has(p.key));
+  if (!opts.length) {
+    tankSel.innerHTML = '<option>All added</option>';
+    tankSel.disabled = true; if (addBtn) addBtn.disabled = true;
+    return;
+  }
+  tankSel.disabled = false; if (addBtn) addBtn.disabled = false;
+  tankSel.innerHTML = (opts.length > 1 ? '<option value="__all__">All tanks</option>' : '')
+    + opts.map(p => `<option value="${p.key}">${p.tank}</option>`).join('');
+}
+
 function addTrendSeries() {
   const sectionKey = STATE._trendSectionKey;
   const data = STATE.lastSectionData;
-  const paramKey = document.getElementById('cc-add-param').value;
   const type = document.getElementById('cc-add-type').value;
   const color = document.getElementById('cc-add-color').value;
-  if (!paramKey) return;
+  const tankWrap = document.getElementById('cc-add-tank-wrap');
+  const isTankBased = tankWrap && tankWrap.style.display !== 'none';
 
   const series = loadTrendSeries(sectionKey, data);
-  series.push({ id: 'series_' + Date.now(), paramKey, type, color });
+
+  if (isTankBased) {
+    const tankVal = document.getElementById('cc-add-tank').value;
+    const paramLabel = document.getElementById('cc-add-param').value;
+    if (tankVal === '__all__') {
+      // Add every not-yet-used tank for this parameter, each its own color.
+      const used = STATE._ccUsedKeys || new Set();
+      (STATE._ccChartable || []).filter(p => p.label === paramLabel && p.tank && !used.has(p.key))
+        .forEach((p, i) => {
+          const c = LEACH_TANK_COLORS[p.tank] || TREND_PALETTE[(series.length + i) % TREND_PALETTE.length];
+          series.push({ id: 'series_' + Date.now() + '_' + p.tank, paramKey: p.key, type, color: c });
+        });
+    } else {
+      if (!tankVal) return;
+      series.push({ id: 'series_' + Date.now(), paramKey: tankVal, type, color });
+    }
+  } else {
+    const paramKey = document.getElementById('cc-add-param').value;
+    if (!paramKey) return;
+    series.push({ id: 'series_' + Date.now(), paramKey, type, color });
+  }
+
   saveTrendSeries(sectionKey, series);
 
   const paramsByKey = {};

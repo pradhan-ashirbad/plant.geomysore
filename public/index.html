@@ -425,36 +425,42 @@
       Add or remove parameters on this chart, and pick how each one is drawn.
     </div>
     <div id="cc-series-list" style="max-height:280px;overflow-y:auto;margin-bottom:14px"></div>
-    <div style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--bdr);padding-top:12px">
-      <div class="form-row" style="flex:1;margin-bottom:0">
-        <label>Add Parameter</label>
-        <select id="cc-add-param"></select>
+    <div style="border-top:1px solid var(--bdr);padding-top:12px">
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-row" style="flex:1 1 130px;margin-bottom:0">
+          <label>Parameter</label>
+          <select id="cc-add-param" onchange="_ccRepopulateTanks()"></select>
+        </div>
+        <div class="form-row" id="cc-add-tank-wrap" style="flex:1 1 110px;margin-bottom:0;display:none">
+          <label>Tank</label>
+          <select id="cc-add-tank"></select>
+        </div>
+        <div class="form-row" style="flex:0 0 84px;margin-bottom:0">
+          <label>Type</label>
+          <select id="cc-add-type">
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+            <option value="area">Area</option>
+            <option value="scatter">Scatter</option>
+          </select>
+        </div>
+        <div class="form-row" style="flex:0 0 auto;margin-bottom:0">
+          <label>Color</label>
+          <input type="color" id="cc-add-color" style="width:38px;height:34px;padding:0;border:1px solid var(--bdr);border-radius:var(--r);cursor:pointer">
+        </div>
+        <button class="btn-apply" id="cc-add-btn" onclick="addTrendSeries()" style="flex:0 0 auto">+ Add</button>
       </div>
-      <div class="form-row" style="margin-bottom:0">
-        <label>Type</label>
-        <select id="cc-add-type">
-          <option value="bar">Bar</option>
-          <option value="line">Line</option>
-          <option value="area">Area</option>
-          <option value="scatter">Scatter</option>
-        </select>
-      </div>
-      <div class="form-row" style="margin-bottom:0">
-        <label>Color</label>
-        <input type="color" id="cc-add-color" style="width:38px;height:34px;padding:0;border:1px solid var(--bdr);border-radius:var(--r);cursor:pointer">
-      </div>
-      <button class="btn-apply" id="cc-add-btn" onclick="addTrendSeries()">+ Add</button>
     </div>
-    <div style="display:flex;gap:8px;align-items:flex-end;border-top:1px solid var(--bdr);padding-top:12px;margin-top:12px">
-      <div class="form-row" style="flex:1;margin-bottom:0">
-        <label>Y-axis min <span style="color:var(--txt3);font-weight:400">(blank = auto)</span></label>
+    <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;border-top:1px solid var(--bdr);padding-top:12px;margin-top:12px">
+      <div class="form-row" style="flex:1 1 110px;margin-bottom:0">
+        <label>Y-axis min <span style="color:var(--txt3);font-weight:400">(auto)</span></label>
         <input type="number" step="any" id="cc-ymin" class="filter-input" placeholder="auto">
       </div>
-      <div class="form-row" style="flex:1;margin-bottom:0">
-        <label>Y-axis max <span style="color:var(--txt3);font-weight:400">(blank = auto)</span></label>
+      <div class="form-row" style="flex:1 1 110px;margin-bottom:0">
+        <label>Y-axis max <span style="color:var(--txt3);font-weight:400">(auto)</span></label>
         <input type="number" step="any" id="cc-ymax" class="filter-input" placeholder="auto">
       </div>
-      <button class="btn-apply" onclick="applyTrendYRange()">Apply</button>
+      <button class="btn-apply" onclick="applyTrendYRange()" style="flex:0 0 auto">Apply</button>
     </div>
     <div class="modal-footer">
       <button class="submit-btn" onclick="closeModal('chart-customize')" style="width:auto;padding:8px 24px">Done</button>
