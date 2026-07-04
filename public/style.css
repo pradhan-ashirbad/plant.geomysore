@@ -341,11 +341,11 @@ body {
 .hm-warn { background: var(--warn-bg); color: var(--warn); }
 .hm-crit { background: var(--crit-bg); color: var(--crit); }
 .hm-na   { background: var(--nodata-bg); color: var(--nodata); }
-.hm-section-sep td {
-  background: var(--bg3); color: var(--txt3); font-size: 11px;
-  font-weight: 700; text-transform: uppercase; padding: 4px 10px;
-  text-align: left !important; font-family: var(--font) !important;
+.hm-avg-row td {
+  border-top: 2px solid var(--bdr); font-weight: 700;
+  background: var(--bg3); color: var(--txt);
 }
+.hm-avg-row .hm-tank-label { text-transform: uppercase; font-size: 10.5px; color: var(--txt3) !important; }
 
 /* Param selector buttons */
 .param-sel-btns { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }

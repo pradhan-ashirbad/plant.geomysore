@@ -803,38 +803,50 @@ function renderLeachingHeatmap(data, param) {
   const rows = data.rows || [];
   if (!rows.length) return '<div class="nodata">No data</div>';
 
+  // DT tanks don't have a DO reading at all — hide that whole column group
+  // rather than showing a column of permanent dashes.
+  const showDt = param === 'nacn' || param === 'ph' || param === 'au';
+  const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
+  const tanks = showDt ? [...LT_TANKS, ...DT_TANKS] : LT_TANKS;
+
   const showRows = STATE.detailMode !== 'date' ? rows.slice(-14) : rows;
   const timeLabels = showRows.map(r => r.__time || r.__date || '');
 
-  let html = `<div class="leach-heatmap"><table class="heatmap-table">
-    <thead><tr><th style="text-align:left">Tank</th>${timeLabels.map(t=>`<th>${t}</th>`).join('')}</tr></thead><tbody>`;
+  const cellClass = (s) => !s || s === 'NO_DATA' ? 'hm-na' : s === 'NORMAL' ? 'hm-ok' : s === 'WARNING' ? 'hm-warn' : 'hm-crit';
 
-  LT_TANKS.forEach(tank => {
-    const key = (paramKeyMap[param] || paramKeyMap.nacn)(tank);
-    html += `<tr><td class="hm-tank-label" style="color:#B8860B;background:var(--bg3)">${tank}</td>`;
-    showRows.forEach(row => {
+  let html = `<div class="leach-heatmap"><table class="heatmap-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th colspan="${LT_TANKS.length}">Leach Tanks</th>
+        ${showDt ? `<th colspan="${DT_TANKS.length}">Detox Tanks</th>` : ''}
+      </tr>
+      <tr>
+        <th style="text-align:left">Time</th>
+        ${tanks.map(t => `<th class="${DT_TANKS.includes(t) ? 'hm-dt-header' : ''}">${t}</th>`).join('')}
+      </tr>
+    </thead>
+    <tbody>`;
+
+  showRows.forEach((row, i) => {
+    html += `<tr><td class="hm-tank-label">${timeLabels[i]}</td>`;
+    tanks.forEach(tank => {
+      const key = keyFn(tank);
       const v = row[key];
-      const s = row[key + '__status'];
-      const cls = !s || s === 'NO_DATA' ? 'hm-na' : s === 'NORMAL' ? 'hm-ok' : s === 'WARNING' ? 'hm-warn' : 'hm-crit';
-      html += `<td class="${cls}">${(v !== '' && v !== undefined && v !== null) ? fmt(v,2) : '—'}</td>`;
+      const cls = cellClass(row[key + '__status']);
+      html += `<td class="${cls}">${(v !== '' && v !== undefined && v !== null) ? fmt(v, 2) : '—'}</td>`;
     });
     html += '</tr>';
   });
 
-  if (param === 'nacn' || param === 'ph' || param === 'au') {
-    html += `<tr class="hm-section-sep"><td colspan="${timeLabels.length+1}">Discharge Tanks</td></tr>`;
-    DT_TANKS.forEach(tank => {
-      const key = param === 'nacn' ? `${tank} NaCN (ppm)` : param === 'ph' ? `${tank} pH` : `${tank} Au in Liquor (ppm)`;
-      html += `<tr><td class="hm-tank-label hm-dt-header">${tank}</td>`;
-      showRows.forEach(row => {
-        const v = row[key];
-        const s = row[key + '__status'];
-        const cls = !s || s === 'NO_DATA' ? 'hm-na' : s === 'NORMAL' ? 'hm-ok' : s === 'WARNING' ? 'hm-warn' : 'hm-crit';
-        html += `<td class="${cls}">${(v !== '' && v !== undefined && v !== null) ? fmt(v,2) : '—'}</td>`;
-      });
-      html += '</tr>';
-    });
-  }
+  html += `<tr class="hm-avg-row"><td class="hm-tank-label">Average</td>`;
+  tanks.forEach(tank => {
+    const key = keyFn(tank);
+    const vals = showRows.map(r => parseFloat(r[key])).filter(v => !isNaN(v));
+    const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
+    html += `<td>${avg !== null ? fmt(avg, 2) : '—'}</td>`;
+  });
+  html += '</tr>';
 
   html += '</tbody></table></div>';
   return html;
@@ -2077,6 +2089,12 @@ async function doLeachHistoryImport() {
     return;
   }
 
+  if (!leachFile || !detoxFile) {
+    const missing = !leachFile ? 'Leaching CN/pH Log' : 'Detox Log';
+    const proceed = confirm(`You haven't selected a ${missing} file — only the other one will be imported. Continue with just one file?`);
+    if (!proceed) return;
+  }
+
   msg.textContent = 'Uploading and processing… this can take a minute for a full month of data.';
   msg.className = 'form-msg'; msg.style.display = 'block';
   resultEl.innerHTML = '';
@@ -2107,10 +2125,14 @@ async function doLeachHistoryImport() {
 
 function leachHistoryResultHtml(data) {
   const section = (title, r) => {
-    if (!r) return '';
-    let html = `<div class="form-card" style="margin-top:10px">
-      <div style="font-weight:700;color:var(--txt);margin-bottom:6px">${title}</div>
-      <div style="font-size:12.5px;color:var(--txt2)">${r.sheetsProcessed} day-sheet(s), <b>${r.rowsImported} reading row(s)</b> imported.</div>`;
+    if (!r) return `<div class="form-card" style="margin-top:10px;border-color:var(--warn)">
+      <div style="font-weight:700;color:var(--warn)">⚠ ${title}: no file was uploaded</div>
+      <div style="font-size:12px;color:var(--txt3);margin-top:4px">Nothing was imported for ${title} — its file field was empty on this upload.</div>
+    </div>`;
+    const zeroRows = r.rowsImported === 0;
+    let html = `<div class="form-card" style="margin-top:10px${zeroRows ? ';border-color:var(--crit)' : ''}">
+      <div style="font-weight:700;color:var(--txt);margin-bottom:6px">${zeroRows ? '⚠ ' : ''}${title}</div>
+      <div style="font-size:12.5px;color:${zeroRows ? 'var(--crit)' : 'var(--txt2)'}">${r.sheetsProcessed} day-sheet(s) found, <b>${r.rowsImported} reading row(s)</b> imported${zeroRows ? ' — check the file is the right one and has recognizable headers' : ''}.</div>`;
     if (r.undatedSheets && r.undatedSheets.length) {
       html += `<div style="margin-top:8px;font-size:11.5px;color:var(--txt3)">
         <b>Sheets with no in-cell date:</b><br>${r.undatedSheets.map(s => escapeHtml(s)).join('<br>')}

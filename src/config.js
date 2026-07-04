@@ -158,9 +158,9 @@ function _buildLeachingParams() {
     params.push({ key: `${t} Overflow`,         label: 'Overflow',      unit: '',    tank: t, tankGroup: 'Leach', isOverflow: true });
   });
   DT_TANKS.forEach(t => {
-    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Discharge', limitId: 'DETOX_NACN', limitLabel: 'All Detox Tanks — NaCN (ppm)' });
-    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Discharge', limitId: 'DETOX_PH', limitLabel: 'All Detox Tanks — pH' });
-    params.push({ key: `${t} Au in Liquor (ppm)`, label: 'Au in Liquor', unit: 'ppm', tank: t, tankGroup: 'Discharge', limitId: `DT_AU_${t}` });
+    params.push({ key: `${t} NaCN (ppm)`,       label: 'NaCN',          unit: 'ppm', tank: t, tankGroup: 'Detox', limitId: 'DETOX_NACN', limitLabel: 'All Detox Tanks — NaCN (ppm)' });
+    params.push({ key: `${t} pH`,               label: 'pH',            unit: '',    tank: t, tankGroup: 'Detox', limitId: 'DETOX_PH', limitLabel: 'All Detox Tanks — pH' });
+    params.push({ key: `${t} Au in Liquor (ppm)`, label: 'Au in Liquor', unit: 'ppm', tank: t, tankGroup: 'Detox', limitId: `DT_AU_${t}` });
   });
   params.push({ key: 'Notes', label: 'Notes', unit: '', isText: true });
   return params;
