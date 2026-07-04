@@ -1448,29 +1448,55 @@ function openTrendSeriesManager() {
   chartable.forEach(p => { paramsByKey[p.key] = p; });
 
   STATE._trendSectionKey = sectionKey;
+  STATE._ccSelectedTanks = new Set();
+  _ccToggleSection(null); // collapse both panels on open
   _renderTrendSeriesList(sectionKey, paramsByKey);
   document.getElementById('modal-chart-customize').classList.remove('hidden');
 }
+
+// Collapsible add/axis panels — mutually exclusive so only one control
+// surface is visible at a time. Pass null to collapse both (on modal open).
+function _ccToggleSection(name) {
+  const addPanel  = document.getElementById('cc-add-panel');
+  const axisPanel = document.getElementById('cc-axis-panel');
+  const addBtn    = document.getElementById('cc-add-toggle');
+  const axisBtn   = document.getElementById('cc-axis-toggle');
+  const wasOpen = (name === 'add' && addPanel.style.display !== 'none')
+               || (name === 'axis' && axisPanel.style.display !== 'none');
+  const openName = (name && !wasOpen) ? name : null;
+
+  addPanel.style.display  = openName === 'add'  ? '' : 'none';
+  axisPanel.style.display = openName === 'axis' ? '' : 'none';
+  addBtn.classList.toggle('active', openName === 'add');
+  axisBtn.classList.toggle('active', openName === 'axis');
+}
+
+const CC_TYPE_OPTS = [
+  { type: 'line',    icon: 'L' },
+  { type: 'bar',     icon: 'B' },
+  { type: 'area',    icon: 'A' },
+  { type: 'scatter', icon: 'S' },
+];
 
 function _renderTrendSeriesList(sectionKey, paramsByKey) {
   const series = loadTrendSeries(sectionKey, STATE.lastSectionData);
   const list = document.getElementById('cc-series-list');
 
+  // Compact row: swatch, label, a 4-way icon toggle for chart type (instead
+  // of a dropdown), remove button — everything on one line.
   list.innerHTML = series.length ? series.map((s, i) => {
     const p = paramsByKey[s.paramKey];
     if (!p) return '';
     const color = s.color || TREND_PALETTE[i % TREND_PALETTE.length];
+    const typeBtns = CC_TYPE_OPTS.map(o =>
+      `<button type="button" class="cc-type-btn ${s.type===o.type?'active':''}" title="${o.type}" onclick="changeTrendSeriesType('${s.id}','${o.type}')">${o.icon}</button>`
+    ).join('');
     return `
-      <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">
-        <input type="color" value="${color}" title="Chart color" style="width:28px;height:28px;padding:0;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;flex-shrink:0" onchange="changeTrendSeriesColor('${s.id}', this.value)">
-        <span style="flex:1;font-size:13px">${_paramDisplayLabel(p)}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">(${p.unit})</span>` : ''}</span>
-        <select class="filter-input" onchange="changeTrendSeriesType('${s.id}', this.value)">
-          <option value="bar"     ${s.type==='bar'?'selected':''}>Bar</option>
-          <option value="line"    ${s.type==='line'?'selected':''}>Line</option>
-          <option value="area"    ${s.type==='area'?'selected':''}>Area</option>
-          <option value="scatter" ${s.type==='scatter'?'selected':''}>Scatter</option>
-        </select>
-        <button class="btn-cancel" onclick="removeTrendSeries('${s.id}')" style="padding:3px 9px;color:var(--crit);border-color:var(--crit-bdr)">✕</button>
+      <div class="cc-series-row">
+        <input type="color" value="${color}" title="Chart color" style="width:22px;height:22px;padding:0;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;flex-shrink:0" onchange="changeTrendSeriesColor('${s.id}', this.value)">
+        <span style="flex:1;font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${_paramDisplayLabel(p)}${p.unit ? ` <span style="color:var(--txt3);font-size:10.5px">(${p.unit})</span>` : ''}</span>
+        <div class="cc-type-toggle">${typeBtns}</div>
+        <button class="btn-cancel" onclick="removeTrendSeries('${s.id}')" style="padding:2px 8px;color:var(--crit);border-color:var(--crit-bdr);flex-shrink:0">✕</button>
       </div>`;
   }).join('') : '<div class="nodata" style="padding:12px 0">No parameters on this chart yet.</div>';
 
@@ -1479,22 +1505,27 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   const isTankBased = chartable.some(p => p.tank);
   STATE._ccChartable = chartable;
   STATE._ccUsedKeys = usedKeys;
+  if (!STATE._ccSelectedTanks) STATE._ccSelectedTanks = new Set();
 
-  const addSel   = document.getElementById('cc-add-param');
-  const addBtn   = document.getElementById('cc-add-btn');
-  const tankWrap = document.getElementById('cc-add-tank-wrap');
+  const addSel      = document.getElementById('cc-add-param');
+  const addBtn      = document.getElementById('cc-add-btn');
+  const tankMultiWrap = document.getElementById('cc-add-tank-multiwrap');
 
   if (isTankBased) {
-    // Two-step picker: choose a parameter (NaCN/pH/…), then a tank (or all).
-    tankWrap.style.display = '';
+    // Two-step picker: choose a parameter (NaCN/pH/…), then any number of
+    // tanks via chips (instead of a single-select dropdown).
+    tankMultiWrap.style.display = '';
     const paramLabels = [];
     chartable.forEach(p => { if (p.tank && !paramLabels.includes(p.label)) paramLabels.push(p.label); });
+    const prevParam = addSel.value;
     addSel.innerHTML = paramLabels.map(l => `<option value="${l}">${l}</option>`).join('');
+    if (paramLabels.includes(prevParam)) addSel.value = prevParam;
     addSel.disabled = false;
+    STATE._ccSelectedTanks.clear();
     _ccRepopulateTanks();
   } else {
     // Flat picker: one parameter per option (Crushing, Milling, …).
-    tankWrap.style.display = 'none';
+    tankMultiWrap.style.display = 'none';
     const available = chartable.filter(p => !usedKeys.has(p.key));
     if (available.length) {
       addSel.disabled = false; addBtn.disabled = false;
@@ -1514,24 +1545,44 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   if (ymax) ymax.value = yr.max !== null ? yr.max : '';
 }
 
-// Fill the Tank dropdown with the tanks that have the currently-selected
-// parameter and aren't already on the chart, plus an "All tanks" shortcut.
+// Renders the tank chips for the currently-selected parameter (tanks that
+// already have that parameter on the chart are omitted). Clicking a chip
+// toggles it in/out of STATE._ccSelectedTanks (multi-select).
 function _ccRepopulateTanks() {
-  const tankSel = document.getElementById('cc-add-tank');
+  const chipsEl = document.getElementById('cc-add-tank-chips');
   const addBtn = document.getElementById('cc-add-btn');
   const chartable = STATE._ccChartable || [];
   const used = STATE._ccUsedKeys || new Set();
-  if (!tankSel) return;
+  if (!chipsEl) return;
+  STATE._ccSelectedTanks.clear();
+
   const paramLabel = document.getElementById('cc-add-param').value;
   const opts = chartable.filter(p => p.label === paramLabel && p.tank && !used.has(p.key));
   if (!opts.length) {
-    tankSel.innerHTML = '<option>All added</option>';
-    tankSel.disabled = true; if (addBtn) addBtn.disabled = true;
+    chipsEl.innerHTML = '<span class="nodata" style="padding:0;font-size:11px">All tanks already added</span>';
+    if (addBtn) addBtn.disabled = true;
     return;
   }
-  tankSel.disabled = false; if (addBtn) addBtn.disabled = false;
-  tankSel.innerHTML = (opts.length > 1 ? '<option value="__all__">All tanks</option>' : '')
-    + opts.map(p => `<option value="${p.key}">${p.tank}</option>`).join('');
+  if (addBtn) addBtn.disabled = false;
+  chipsEl.innerHTML = opts.map(p =>
+    `<button type="button" class="cc-tank-chip" data-key="${p.key}" onclick="_ccToggleTankChip(this)">${p.tank}</button>`
+  ).join('');
+}
+
+function _ccToggleTankChip(btn) {
+  const key = btn.getAttribute('data-key');
+  const sel = STATE._ccSelectedTanks;
+  const tank = (STATE._ccChartable || []).find(p => p.key === key);
+  if (sel.has(key)) {
+    sel.delete(key);
+    btn.classList.remove('active');
+    btn.style.background = ''; btn.style.borderColor = '';
+  } else {
+    sel.add(key);
+    btn.classList.add('active');
+    const color = tank ? (LEACH_TANK_COLORS[tank.tank] || TREND_PALETTE[sel.size % TREND_PALETTE.length]) : TREND_PALETTE[0];
+    btn.style.background = color; btn.style.borderColor = color;
+  }
 }
 
 function addTrendSeries() {
@@ -1539,26 +1590,19 @@ function addTrendSeries() {
   const data = STATE.lastSectionData;
   const type = document.getElementById('cc-add-type').value;
   const color = document.getElementById('cc-add-color').value;
-  const tankWrap = document.getElementById('cc-add-tank-wrap');
-  const isTankBased = tankWrap && tankWrap.style.display !== 'none';
+  const tankMultiWrap = document.getElementById('cc-add-tank-multiwrap');
+  const isTankBased = tankMultiWrap && tankMultiWrap.style.display !== 'none';
 
   const series = loadTrendSeries(sectionKey, data);
 
   if (isTankBased) {
-    const tankVal = document.getElementById('cc-add-tank').value;
-    const paramLabel = document.getElementById('cc-add-param').value;
-    if (tankVal === '__all__') {
-      // Add every not-yet-used tank for this parameter, each its own color.
-      const used = STATE._ccUsedKeys || new Set();
-      (STATE._ccChartable || []).filter(p => p.label === paramLabel && p.tank && !used.has(p.key))
-        .forEach((p, i) => {
-          const c = LEACH_TANK_COLORS[p.tank] || TREND_PALETTE[(series.length + i) % TREND_PALETTE.length];
-          series.push({ id: 'series_' + Date.now() + '_' + p.tank, paramKey: p.key, type, color: c });
-        });
-    } else {
-      if (!tankVal) return;
-      series.push({ id: 'series_' + Date.now(), paramKey: tankVal, type, color });
-    }
+    const selected = Array.from(STATE._ccSelectedTanks || []);
+    if (!selected.length) { showToast('Pick at least one tank', 'error'); return; }
+    selected.forEach((paramKey, i) => {
+      const tank = (STATE._ccChartable || []).find(p => p.key === paramKey);
+      const c = (tank && LEACH_TANK_COLORS[tank.tank]) || TREND_PALETTE[(series.length + i) % TREND_PALETTE.length];
+      series.push({ id: 'series_' + Date.now() + '_' + i, paramKey, type, color: c });
+    });
   } else {
     const paramKey = document.getElementById('cc-add-param').value;
     if (!paramKey) return;

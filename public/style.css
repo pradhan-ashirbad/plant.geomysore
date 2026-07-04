@@ -356,6 +356,35 @@ body {
 }
 .param-sel-btn.active { background: var(--maroon); border-color: var(--maroon); color: #fff; font-weight: 700; }
 
+/* Chart customizer: collapsible add/axis panels, compact series rows */
+.cc-toggle-btn {
+  padding: 6px 12px; border-radius: var(--r); border: 1px solid var(--bdr);
+  background: var(--bg3); color: var(--txt2); font-size: 12px; font-weight: 600;
+  cursor: pointer; font-family: var(--font); transition: all .15s;
+}
+.cc-toggle-btn.active { background: var(--maroon); border-color: var(--maroon); color: #fff; }
+
+.cc-tank-chip {
+  padding: 3px 10px; border-radius: 999px; border: 1px solid var(--bdr);
+  background: var(--bg3); color: var(--txt2); font-size: 11px; font-weight: 600;
+  cursor: pointer; font-family: var(--mono); transition: all .15s;
+}
+.cc-tank-chip.active { color: #fff; border-color: transparent; }
+
+.cc-series-row {
+  display: flex; align-items: center; gap: 8px; padding: 4px 0;
+  border-bottom: 1px solid var(--bdr);
+}
+.cc-type-toggle {
+  display: flex; border: 1px solid var(--bdr); border-radius: var(--r); overflow: hidden; flex-shrink: 0;
+}
+.cc-type-btn {
+  width: 26px; height: 24px; border: none; background: var(--bg3); color: var(--txt3);
+  font-size: 13px; cursor: pointer; line-height: 1; border-right: 1px solid var(--bdr);
+}
+.cc-type-btn:last-child { border-right: none; }
+.cc-type-btn.active { background: var(--maroon); color: #fff; }
+
 /* ═══════════════════════════════════════════════════════════════════
    ENTRY FORM
 ═══════════════════════════════════════════════════════════════════ */
