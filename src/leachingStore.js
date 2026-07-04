@@ -204,11 +204,16 @@ async function appendRow(sheetName, rowArray) {
          (entry_date, time_slot, tank, nacn, nacn_below_detection, ph, dissolved_oxygen, au, au_below_detection, overflow, notes, submitted_by, entry_timestamp)
        VALUES ${tuples.join(',')}
        ON CONFLICT (entry_date, time_slot, tank) DO UPDATE SET
-         nacn = EXCLUDED.nacn, nacn_below_detection = EXCLUDED.nacn_below_detection,
-         ph = EXCLUDED.ph, dissolved_oxygen = EXCLUDED.dissolved_oxygen,
-         au = EXCLUDED.au, au_below_detection = EXCLUDED.au_below_detection,
-         overflow = EXCLUDED.overflow, notes = EXCLUDED.notes,
-         submitted_by = EXCLUDED.submitted_by, entry_timestamp = EXCLUDED.entry_timestamp`,
+         nacn = COALESCE(EXCLUDED.nacn, leaching_readings.nacn),
+         nacn_below_detection = CASE WHEN EXCLUDED.nacn IS NOT NULL THEN EXCLUDED.nacn_below_detection ELSE leaching_readings.nacn_below_detection END,
+         ph = COALESCE(EXCLUDED.ph, leaching_readings.ph),
+         dissolved_oxygen = COALESCE(EXCLUDED.dissolved_oxygen, leaching_readings.dissolved_oxygen),
+         au = COALESCE(EXCLUDED.au, leaching_readings.au),
+         au_below_detection = CASE WHEN EXCLUDED.au IS NOT NULL THEN EXCLUDED.au_below_detection ELSE leaching_readings.au_below_detection END,
+         overflow = COALESCE(EXCLUDED.overflow, leaching_readings.overflow),
+         notes = COALESCE(EXCLUDED.notes, leaching_readings.notes),
+         submitted_by = COALESCE(EXCLUDED.submitted_by, leaching_readings.submitted_by),
+         entry_timestamp = COALESCE(EXCLUDED.entry_timestamp, leaching_readings.entry_timestamp)`,
       params
     );
   }
@@ -225,13 +230,26 @@ async function appendRow(sheetName, rowArray) {
          (entry_date, time_slot, tank, role, nacn, nacn_below_detection, ph, au, au_below_detection, notes, submitted_by, entry_timestamp)
        VALUES ${tuples.join(',')}
        ON CONFLICT (entry_date, time_slot, tank) DO UPDATE SET
-         role = EXCLUDED.role, nacn = EXCLUDED.nacn, nacn_below_detection = EXCLUDED.nacn_below_detection,
-         ph = EXCLUDED.ph, au = EXCLUDED.au, au_below_detection = EXCLUDED.au_below_detection,
-         notes = EXCLUDED.notes, submitted_by = EXCLUDED.submitted_by, entry_timestamp = EXCLUDED.entry_timestamp`,
+         role = COALESCE(EXCLUDED.role, detox_readings.role),
+         nacn = COALESCE(EXCLUDED.nacn, detox_readings.nacn),
+         nacn_below_detection = CASE WHEN EXCLUDED.nacn IS NOT NULL THEN EXCLUDED.nacn_below_detection ELSE detox_readings.nacn_below_detection END,
+         ph = COALESCE(EXCLUDED.ph, detox_readings.ph),
+         au = COALESCE(EXCLUDED.au, detox_readings.au),
+         au_below_detection = CASE WHEN EXCLUDED.au IS NOT NULL THEN EXCLUDED.au_below_detection ELSE detox_readings.au_below_detection END,
+         notes = COALESCE(EXCLUDED.notes, detox_readings.notes),
+         submitted_by = COALESCE(EXCLUDED.submitted_by, detox_readings.submitted_by),
+         entry_timestamp = COALESCE(EXCLUDED.entry_timestamp, detox_readings.entry_timestamp)`,
       params
     );
   }
 }
+
+// Note on the COALESCE upserts above: re-submitting a reading merges with
+// whatever is already stored rather than replacing it wholesale, so a
+// partial write (e.g. the DO-only mini-table in the historical logs, or a
+// correction that only fills some tanks) never nulls out fields it didn't
+// touch. The entry form only ever sends filled-in fields, so this never
+// prevents a genuine edit.
 
 // Corrections to an already-submitted reading go through the same upsert
 // path as a fresh submission — the (entry_date, time_slot, tank) unique key

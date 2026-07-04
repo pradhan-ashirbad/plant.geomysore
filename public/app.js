@@ -808,11 +808,32 @@ function renderLeachingHeatmap(data, param) {
   const showDt = param === 'nacn' || param === 'ph' || param === 'au';
   const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
   const tanks = showDt ? [...LT_TANKS, ...DT_TANKS] : LT_TANKS;
-
-  const showRows = STATE.detailMode !== 'date' ? rows.slice(-14) : rows;
-  const timeLabels = showRows.map(r => r.__time || r.__date || '');
+  const SLOTS = ['03:00','07:00','11:00','15:00','19:00','23:00'];
 
   const cellClass = (s) => !s || s === 'NO_DATA' ? 'hm-na' : s === 'NORMAL' ? 'hm-ok' : s === 'WARNING' ? 'hm-warn' : 'hm-crit';
+  const worstOf = (arr) => arr.includes('CRITICAL') ? 'CRITICAL' : arr.includes('WARNING') ? 'WARNING' : arr.some(s => s === 'NORMAL') ? 'NORMAL' : 'NO_DATA';
+
+  // Date view: one row per scheduled reading (the 6 times of that day).
+  // Month/range view: collapse every day's readings onto the 6 canonical
+  // time slots — each cell is that slot's average across the whole period —
+  // otherwise the table balloons into dozens of repeating, out-of-order times.
+  const isAgg = STATE.detailMode !== 'date';
+  const slotOf = (r) => {
+    const t = String(r.__time || '').slice(0, 5);
+    return SLOTS.includes(t) ? t : null;
+  };
+  const displayRows = isAgg
+    ? SLOTS.map(slot => ({ label: slot, rows: rows.filter(r => slotOf(r) === slot) }))
+    : rows.map(r => ({ label: r.__time || r.__date || '', rows: [r] }));
+
+  const cellFor = (dr, tank) => {
+    const key = keyFn(tank);
+    const vals = dr.rows.map(r => parseFloat(r[key])).filter(v => !isNaN(v));
+    if (!vals.length) return { text: '—', cls: 'hm-na' };
+    const v = vals.reduce((a, b) => a + b, 0) / vals.length;
+    const statuses = dr.rows.map(r => r[key + '__status']).filter(Boolean);
+    return { text: fmt(v, 2), cls: cellClass(isAgg ? worstOf(statuses) : statuses[0]) };
+  };
 
   let html = `<div class="leach-heatmap"><table class="heatmap-table">
     <thead>
@@ -828,21 +849,20 @@ function renderLeachingHeatmap(data, param) {
     </thead>
     <tbody>`;
 
-  showRows.forEach((row, i) => {
-    html += `<tr><td class="hm-tank-label">${timeLabels[i]}</td>`;
+  displayRows.forEach(dr => {
+    html += `<tr><td class="hm-tank-label">${dr.label}</td>`;
     tanks.forEach(tank => {
-      const key = keyFn(tank);
-      const v = row[key];
-      const cls = cellClass(row[key + '__status']);
-      html += `<td class="${cls}">${(v !== '' && v !== undefined && v !== null) ? fmt(v, 2) : '—'}</td>`;
+      const c = cellFor(dr, tank);
+      html += `<td class="${c.cls}">${c.text}</td>`;
     });
     html += '</tr>';
   });
 
+  // Overall average per tank across every reading in the period.
   html += `<tr class="hm-avg-row"><td class="hm-tank-label">Average</td>`;
   tanks.forEach(tank => {
     const key = keyFn(tank);
-    const vals = showRows.map(r => parseFloat(r[key])).filter(v => !isNaN(v));
+    const vals = rows.map(r => parseFloat(r[key])).filter(v => !isNaN(v));
     const avg = vals.length ? vals.reduce((a, b) => a + b, 0) / vals.length : null;
     html += `<td>${avg !== null ? fmt(avg, 2) : '—'}</td>`;
   });
