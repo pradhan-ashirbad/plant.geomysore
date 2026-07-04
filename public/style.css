@@ -274,6 +274,21 @@ body {
   border-bottom: 1px solid var(--bdr);
 }
 
+/* Stoppage summary + department doughnut (above the stoppage table) */
+.stoppage-summary {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 20px; flex-wrap: wrap; margin-bottom: 16px;
+}
+.stoppage-summary-line { font-size: 14px; color: var(--txt2); }
+.stoppage-summary-line .stoppage-count,
+.stoppage-summary-line .stoppage-hrs {
+  font-family: var(--mono); font-weight: 700; font-size: 20px; color: var(--maroon);
+}
+.stoppage-doughnut-wrap { position: relative; width: 260px; height: 150px; flex-shrink: 0; }
+@media (max-width: 640px) {
+  .stoppage-doughnut-wrap { width: 100%; height: 180px; }
+}
+
 /* ═══════════════════════════════════════════════════════════════════
    DATA TABLES
 ═══════════════════════════════════════════════════════════════════ */

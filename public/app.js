@@ -652,6 +652,7 @@ function renderDetailData(activeKey, data) {
   setTimeout(() => {
     buildSectionCharts(data);
     buildTargetGauges(data);
+    buildStoppageDoughnut(data);
     if (showProdTrend) buildProductionTrendChart(activeKey, data);
   }, 60);
 
@@ -987,11 +988,48 @@ function chemStrip(chemicals) {
   </div>`;
 }
 
+// Groups a section's stoppages by department (case-insensitive), returning
+// [{ dept, count, hrs }] sorted by count desc. Used for the summary + doughnut.
+function _stoppageByDept(stoppages) {
+  const map = {};
+  (stoppages || []).forEach(s => {
+    const raw = String(s.dept || '').trim() || 'Unspecified';
+    const key = raw.toUpperCase();
+    if (!map[key]) map[key] = { dept: raw, count: 0, hrs: 0 };
+    map[key].count++;
+    map[key].hrs += (parseFloat(s.hrs) || 0);
+  });
+  return Object.values(map).sort((a, b) => b.count - a.count);
+}
+
+const STOPPAGE_DEPT_COLORS = {
+  MECHANICAL: '#C0392B', ELECTRICAL: '#B8860B', 'O&M': '#2471A3',
+  OPERATION: '#1A7A4A', OTHERS: '#7D3C98', PROCESS: '#16A085',
+};
+function _stoppageDeptColor(dept, i) {
+  return STOPPAGE_DEPT_COLORS[String(dept).trim().toUpperCase()] || TREND_PALETTE[i % TREND_PALETTE.length];
+}
+
 function stoppagesHtml(stoppages) {
   if (!stoppages || !stoppages.length) return '';
+  const isMonth = STATE.detailMode !== 'date';
+  const count = stoppages.length;
+  const totalHrs = stoppages.reduce((s, x) => s + (parseFloat(x.hrs) || 0), 0);
+  const periodWord = STATE.detailMode === 'month' ? 'this month' : STATE.detailMode === 'range' ? 'this range' : 'on this date';
+
+  const summary = `
+    <div class="stoppage-summary">
+      <div class="stoppage-summary-line">
+        <span class="stoppage-count">${count}</span> stoppage${count === 1 ? '' : 's'}
+        · <span class="stoppage-hrs">${fmt(totalHrs, 1)}</span> hrs ${periodWord}
+      </div>
+      ${isMonth ? `<div class="stoppage-doughnut-wrap"><canvas id="chart-stoppage-dept"></canvas></div>` : ''}
+    </div>`;
+
   return `
     <div class="section-block">
       <div class="section-block-title">Stoppages</div>
+      ${summary}
       <div class="tbl-wrap">
         <table class="dtbl">
           <thead><tr>
@@ -1009,6 +1047,42 @@ function stoppagesHtml(stoppages) {
         </table>
       </div>
     </div>`;
+}
+
+// Doughnut of a section's stoppages by department (month/range view only).
+function buildStoppageDoughnut(data) {
+  const canvasId = 'chart-stoppage-dept';
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return; // day view, or section has no stoppages
+  if (STATE.charts[canvasId]) { try { STATE.charts[canvasId].destroy(); } catch (e) {} delete STATE.charts[canvasId]; }
+  const byDept = _stoppageByDept(data.stoppages);
+  if (!byDept.length || typeof Chart === 'undefined') return;
+
+  STATE.charts[canvasId] = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: byDept.map(d => d.dept),
+      datasets: [{
+        data: byDept.map(d => d.count),
+        backgroundColor: byDept.map((d, i) => _stoppageDeptColor(d.dept, i)),
+        borderWidth: 0,
+      }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '58%',
+      plugins: {
+        legend: { display: true, position: 'right', labels: { boxWidth: 12, font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (ctx) => {
+              const d = byDept[ctx.dataIndex];
+              return `${d.dept}: ${d.count} stoppage${d.count === 1 ? '' : 's'} · ${fmt(d.hrs, 1)} hrs`;
+            },
+          },
+        },
+      },
+    },
+  });
 }
 
 function genericTableHtml(data) {
@@ -2339,19 +2413,19 @@ async function doLeachHistoryImport() {
   const leachFile = document.getElementById('leach-hist-file').files[0];
   const detoxFile = document.getElementById('detox-hist-file').files[0];
   const slurryFile = document.getElementById('slurry-hist-file').files[0];
+  const stoppageFile = document.getElementById('stoppage-hist-file').files[0];
   const year = document.getElementById('leach-hist-year').value.trim();
 
-  const chosen = [leachFile, detoxFile, slurryFile].filter(Boolean);
+  const chosen = [leachFile, detoxFile, slurryFile, stoppageFile].filter(Boolean);
   if (!chosen.length) {
-    msg.textContent = 'Choose at least one file (Leaching, Detox, and/or Slurry).';
+    msg.textContent = 'Choose at least one file (Leaching, Detox, Slurry, and/or Stoppage).';
     msg.className = 'form-msg error'; msg.style.display = 'block';
     return;
   }
 
-  if (chosen.length < 3) {
-    const missing = [!leachFile && 'Leaching CN/pH Log', !detoxFile && 'Detox Log', !slurryFile && 'Slurry Samples'].filter(Boolean).join(', ');
-    const proceed = confirm(`You haven't selected: ${missing}. Only the chosen file(s) will be imported. Continue?`);
-    if (!proceed) return;
+  if (stoppageFile) {
+    const ok = confirm('Reminder: the Stoppage log has no unique key, so uploading it more than once will duplicate its rows. Upload it only once. Continue?');
+    if (!ok) return;
   }
 
   msg.textContent = 'Uploading and processing… this can take a minute for a full month of data.';
@@ -2362,6 +2436,7 @@ async function doLeachHistoryImport() {
   if (leachFile) formData.append('leaching', leachFile);
   if (detoxFile) formData.append('detox', detoxFile);
   if (slurryFile) formData.append('slurry', slurryFile);
+  if (stoppageFile) formData.append('stoppage', stoppageFile);
   if (year) formData.append('year', year);
   formData.append('token', STATE.token);
 
@@ -2407,7 +2482,7 @@ function leachHistoryResultHtml(data) {
     html += '</div>';
     return html;
   };
-  return section('Leaching', data.leaching) + section('Detox', data.detox) + section('Slurry', data.slurry);
+  return section('Leaching', data.leaching) + section('Detox', data.detox) + section('Slurry', data.slurry) + section('Stoppage', data.stoppage);
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

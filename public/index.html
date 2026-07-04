@@ -283,6 +283,10 @@
               <input type="file" id="slurry-hist-file" accept=".xlsx,.xls">
             </div>
             <div class="form-row">
+              <label>Stoppage Reason log (.xlsx)</label>
+              <input type="file" id="stoppage-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
               <label>Year override (optional)</label>
               <input type="text" id="leach-hist-year" placeholder="e.g. 2025 — only needed if a sheet has no date at all and no dated sibling sheet">
             </div>
@@ -291,10 +295,11 @@
           </div>
           <div id="leach-hist-result" style="margin-top:16px;max-width:640px"></div>
           <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:640px">
-            One-time tool to backfill historical Leaching (LT4-LT10), Detox (DT1-DT4), and Slurry Samples
-            (LT3-LT10, DT1-DT4 Au in Solids) readings from the plant's Excel logs. Upload any combination of the
-            three files. Safe to re-run — re-uploading the same file just rewrites the same readings, it won't
-            duplicate them.
+            One-time tool to backfill historical Leaching (LT4-LT10), Detox (DT1-DT4), Slurry Samples
+            (LT3-LT10, DT1-DT4 Au in Solids), and Stoppage Reason readings from the plant's Excel logs. Upload
+            any combination of the files. Safe to re-run for the tank sheets (re-uploading rewrites the same
+            readings). Note: the stoppage log has no unique key, so re-uploading it appends the rows again —
+            only upload it once.
           </div>
         </div>
 

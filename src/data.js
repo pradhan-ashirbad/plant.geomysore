@@ -298,7 +298,35 @@ function _annotateRow(rowObj, params, limitsMap, targetsMap) {
 
 // ─── STOPPAGES ────────────────────────────────────────────────────────────────
 
-async function _getStoppages(filter, sectionLabel, sheets) {
+// The stoppage log's free-text "Section" column doesn't match the app's
+// section labels: Milling is logged as GRINDING / BALL MILL, Gravity
+// Concentrate as GRAVITY CONCENTRATOR-01, Filter Press as FILTER PRESS-01/-02,
+// Leaching as LEACHING & DETOX. Map each section KEY to the substrings its
+// stoppages can appear under, so a section page counts its own stoppages
+// instead of silently showing zero.
+const STOPPAGE_SECTION_ALIASES = {
+  crushing:    ['crushing'],
+  milling:     ['grinding', 'ball mill', 'milling'],
+  leaching:    ['leaching'],           // matches "LEACHING & DETOX"
+  filterpress: ['filter press'],       // matches "FILTER PRESS", "FILTER PRESS-01/-02"
+  gc:          ['gravity concentrat'], // matches "GRAVITY CONCENTRATOR-01"
+  cyclone:     ['cyclone'],
+  thickener:   ['thickener'],
+  screen:      ['screen'],
+  elution:     ['elution'],
+  ils:         ['ils'],
+  gold:        ['gold'],
+};
+
+function _stoppageMatchesSection(sectionText, sectionKey) {
+  const aliases = STOPPAGE_SECTION_ALIASES[sectionKey];
+  const sec = String(sectionText || '').trim().toLowerCase();
+  if (!sec) return false;
+  if (!aliases) return sec.includes(String(sectionKey).toLowerCase());
+  return aliases.some(a => sec.includes(a));
+}
+
+async function _getStoppages(filter, sectionKey, sheets) {
   const rows = await _getRows(SH.STOPPAGE, filter, sheets);
   const headers = await sheets.getSheetHeaders(SH.STOPPAGE);
   const colMap = buildColMap(headers);
@@ -311,11 +339,8 @@ async function _getStoppages(filter, sectionLabel, sheets) {
   const reasonIdx = findColIndex(colMap, 'Reason');
 
   let filtered = rows;
-  if (sectionLabel) {
-    filtered = rows.filter(r => {
-      const sec = String(r[secIdx] || '').trim().toLowerCase();
-      return sec === sectionLabel.toLowerCase() || sec.includes(sectionLabel.toLowerCase());
-    });
+  if (sectionKey) {
+    filtered = rows.filter(r => _stoppageMatchesSection(r[secIdx], sectionKey));
   }
 
   return filtered.map(r => ({
@@ -510,7 +535,7 @@ async function getSectionData(payload, sheets) {
 
   const [rows, stoppages, chemicals] = await Promise.all([
     _buildSectionRows(secCfg.sheet, params, filter, limitsMap, sheets),
-    _getStoppages(filter, secCfg.label, sheets).catch(() => []),
+    _getStoppages(filter, section, sheets).catch(() => []),
     _getSectionChemStatus(section, filter, sheets).catch(() => []),
   ]);
   const hasData = rows.length > 0;

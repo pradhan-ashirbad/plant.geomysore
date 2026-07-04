@@ -315,7 +315,7 @@ const SHEET_PARAMS = {
     { key: 'Stop Time',         label: 'Stop Time',         unit: '',   isTime: true },
     { key: 'Start Time',        label: 'Start Time',        unit: '',   isTime: true },
     { key: 'Total Stoppage Hrs',label: 'Total Hrs',         unit: 'hrs', autoCalc: true },
-    { key: 'Department',        label: 'Department',        unit: '',   isSelect: true, options: ['Mechanical','Electrical','Process','Mine','Civil','Other'] },
+    { key: 'Department',        label: 'Department',        unit: '',   isSelect: true, options: ['Mechanical','Electrical','O&M','Operation','Others'] },
     { key: 'Reason',            label: 'Reason',            unit: '',   isText: true },
     { key: 'Action Taken',      label: 'Action Taken',      unit: '',   isText: true },
   ],
