@@ -766,10 +766,7 @@ function renderLeaching(data) {
       </div>
       <div id="leach-heatmap-wrap">${renderLeachingHeatmap(data, leachParam)}</div>
     </div>
-    <div class="chart-wrap">
-      <div class="chart-title" id="chart-leach-main-title">Leaching Trend — All Tanks</div>
-      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-leach-main"></canvas></div>
-    </div>
+    ${productionTrendBlockHtml('Leaching Trend')}
     ${stoppagesHtml(data.stoppages)}`;
 }
 
@@ -779,9 +776,10 @@ function switchLeachParam(param) {
   document.querySelectorAll('.param-sel-btn').forEach(b => b.classList.remove('active'));
   const btn = document.getElementById('lhm-btn-' + param);
   if (btn) btn.classList.add('active');
+  // The selector only drives the heatmap now; the chart below has its own
+  // multi-series customizer (gear icon) independent of this parameter.
   if (window._leachData) {
     document.getElementById('leach-heatmap-wrap').innerHTML = renderLeachingHeatmap(window._leachData, param);
-    buildLeachMultiTankChart(window._leachData, param);
   }
 }
 
@@ -1141,10 +1139,43 @@ function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
 // with its own type (Bar/Line/Area/Scatter); series sharing a unit share a
 // Y-axis, series with different units get their own. Persisted per section.
 
-// Numeric, chartable parameters for a section (excludes text/time/select —
-// autoCalc fields like TPH are included since they're still numeric).
+// Numeric, chartable parameters for a section (excludes text/time/select/
+// overflow — autoCalc fields like TPH are included since they're numeric).
 function _chartableParams(data) {
-  return (data.params || []).filter(p => !p.isText && !p.isTime && !p.isSelect);
+  return (data.params || []).filter(p => !p.isText && !p.isTime && !p.isSelect && !p.isOverflow);
+}
+
+// Display name for a parameter in the chart legend / series manager. Tank
+// parameters (LT4 NaCN, DT1 pH, …) all share the same short label ("NaCN"),
+// so prefix the tank to keep them distinguishable.
+function _paramDisplayLabel(p) {
+  if (!p) return '';
+  return p.tank ? `${p.tank} ${p.label}` : p.label;
+}
+
+// Per-section Y-axis min/max override for the trend chart (blank = auto).
+function _trendYRangeKey(sectionKey) { return 'trendYRange:' + sectionKey; }
+
+function loadTrendYRange(sectionKey) {
+  try {
+    const r = JSON.parse(localStorage.getItem(_trendYRangeKey(sectionKey)));
+    if (r) return { min: r.min ?? null, max: r.max ?? null };
+  } catch (e) { /* fall through */ }
+  return { min: null, max: null };
+}
+
+function saveTrendYRange(sectionKey, min, max) {
+  try { localStorage.setItem(_trendYRangeKey(sectionKey), JSON.stringify({ min, max })); } catch (e) { /* storage unavailable */ }
+}
+
+function applyTrendYRange() {
+  const sectionKey = STATE._trendSectionKey;
+  const minV = document.getElementById('cc-ymin').value.trim();
+  const maxV = document.getElementById('cc-ymax').value.trim();
+  const min = minV === '' ? null : parseFloat(minV);
+  const max = maxV === '' ? null : parseFloat(maxV);
+  saveTrendYRange(sectionKey, isNaN(min) ? null : min, isNaN(max) ? null : max);
+  buildProductionTrendChart(sectionKey, STATE.lastSectionData);
 }
 
 function _trendSeriesKey(sectionKey) {
@@ -1157,8 +1188,17 @@ function loadTrendSeries(sectionKey, data) {
     if (raw) return JSON.parse(raw);
   } catch (e) { /* fall through to default */ }
 
-  // First-ever visit to this section: default to Production as a bar chart
-  // (or the first chartable parameter if there's no literal "Production").
+  // Leaching's default: every leach tank's NaCN as its own colored line, so
+  // the chart is immediately useful and matches the heatmap's default param.
+  if (sectionKey === 'leaching') {
+    return LEACH_LT_TANKS.map((t, i) => ({
+      id: 'def_' + t, paramKey: `${t} NaCN (ppm)`, type: 'line',
+      color: LEACH_TANK_COLORS[t] || TREND_PALETTE[i % TREND_PALETTE.length],
+    }));
+  }
+
+  // First-ever visit to any other section: default to Production as a bar
+  // chart (or the first chartable parameter if there's no literal "Production").
   const chartable = _chartableParams(data);
   const prod = chartable.find(p => p.key === 'Production') || chartable[0];
   return prod ? [{ id: 'default', paramKey: prod.key, type: 'bar', color: TREND_PALETTE[0] }] : [];
@@ -1261,11 +1301,11 @@ function buildTargetGauges(data) {
   });
 }
 
-function productionTrendBlockHtml() {
+function productionTrendBlockHtml(title) {
   return `
     <div class="chart-wrap">
       <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center">
-        <div class="chart-title">Production Trend</div>
+        <div class="chart-title">${title || 'Production Trend'}</div>
         <button class="chart-gear-btn" onclick="openTrendSeriesManager()" title="Add or edit chart parameters">⚙</button>
       </div>
       <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-prod-trend"></canvas></div>
@@ -1304,7 +1344,7 @@ function buildProductionTrendChart(sectionKey, data) {
     const axisId = unitToAxis[unit];
     const color = s.color || TREND_PALETTE[i % TREND_PALETTE.length];
     const values = rows.map(r => { const v = parseFloat(r[s.paramKey]); return isNaN(v) ? null : v; });
-    const label = p.label + (p.unit ? ` (${p.unit})` : '');
+    const label = _paramDisplayLabel(p) + (p.unit ? ` (${p.unit})` : '');
 
     if (s.type === 'bar') {
       datasets.push({ type: 'bar', label, data: values, backgroundColor: color + 'A6', yAxisID: axisId });
@@ -1317,6 +1357,7 @@ function buildProductionTrendChart(sectionKey, data) {
     }
   });
 
+  const yRange = loadTrendYRange(sectionKey);
   const scales = { x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 45 } } };
   Object.entries(unitToAxis).forEach(([unit, axisId], i) => {
     scales[axisId] = {
@@ -1326,6 +1367,10 @@ function buildProductionTrendChart(sectionKey, data) {
       ticks: { font: { size: 10 } },
       title: { display: unit !== '—', text: unit === '—' ? '' : unit },
     };
+    // A manual Y-range applies to every value axis (blank = auto). Handy when
+    // all series share a unit, e.g. locking pH to 10–12.
+    if (yRange.min !== null) scales[axisId].min = yRange.min;
+    if (yRange.max !== null) scales[axisId].max = yRange.max;
   });
 
   STATE.charts[canvasId] = new Chart(canvas, {
@@ -1368,7 +1413,7 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
     return `
       <div style="display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid var(--bdr)">
         <input type="color" value="${color}" title="Chart color" style="width:28px;height:28px;padding:0;border:1px solid var(--bdr);border-radius:4px;cursor:pointer;flex-shrink:0" onchange="changeTrendSeriesColor('${s.id}', this.value)">
-        <span style="flex:1;font-size:13px">${p.label}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">(${p.unit})</span>` : ''}</span>
+        <span style="flex:1;font-size:13px">${_paramDisplayLabel(p)}${p.unit ? ` <span style="color:var(--txt3);font-size:11px">(${p.unit})</span>` : ''}</span>
         <select class="filter-input" onchange="changeTrendSeriesType('${s.id}', this.value)">
           <option value="bar"     ${s.type==='bar'?'selected':''}>Bar</option>
           <option value="line"    ${s.type==='line'?'selected':''}>Line</option>
@@ -1385,12 +1430,19 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
   const addBtn = document.getElementById('cc-add-btn');
   if (available.length) {
     addSel.disabled = false; addBtn.disabled = false;
-    addSel.innerHTML = available.map(p => `<option value="${p.key}">${p.label}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
+    addSel.innerHTML = available.map(p => `<option value="${p.key}">${_paramDisplayLabel(p)}${p.unit ? ` (${p.unit})` : ''}</option>`).join('');
   } else {
     addSel.disabled = true; addBtn.disabled = true;
     addSel.innerHTML = '<option>All parameters added</option>';
   }
   document.getElementById('cc-add-color').value = TREND_PALETTE[series.length % TREND_PALETTE.length];
+
+  // Reflect the saved Y-axis range in the inputs.
+  const yr = loadTrendYRange(sectionKey);
+  const ymin = document.getElementById('cc-ymin');
+  const ymax = document.getElementById('cc-ymax');
+  if (ymin) ymin.value = yr.min !== null ? yr.min : '';
+  if (ymax) ymax.value = yr.max !== null ? yr.max : '';
 }
 
 function addTrendSeries() {
@@ -1454,8 +1506,8 @@ function buildSectionCharts(data) {
   const labels = rows.map(r => r.__date || r.__time || '');
 
   if (key === 'leaching') {
-    const param = STATE.leachHmParam || 'nacn';
-    buildLeachMultiTankChart(data, param);
+    // Leaching gets the same customizable multi-series chart as Crushing.
+    buildProductionTrendChart('leaching', data);
   }
 
   if (key === 'carbon') {
@@ -1490,91 +1542,6 @@ const LEACH_TANK_COLORS = {
   LT4: '#C0392B', LT5: '#2471A3', LT6: '#1A7A4A', LT7: '#B7950B',
   LT8: '#7D3C98', LT9: '#D35400', LT10: '#16A085',
 };
-
-// The single flexible leaching chart, driven by the same parameter selector
-// as the heatmap (NaCN/pH/Au/DO). It reshapes itself by view mode:
-//   • Month/range → one colored line per tank across dates (compare tanks
-//     over time), with zoom/pan and click-to-drill-into-a-date.
-//   • Day → a bar per tank for the selected day (compare tanks side by side).
-// Legend entries toggle individual tanks on/off; tooltips, colors, y-axis
-// label and title all follow the selected parameter — no page refresh.
-function buildLeachMultiTankChart(data, param) {
-  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
-  const paramKeyMap = {
-    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`,
-    au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
-  };
-  const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
-  const btnEl = document.getElementById('lhm-btn-' + param);
-  const paramLabel = (btnEl ? btnEl.textContent : param).trim();
-
-  const titleEl = document.getElementById('chart-leach-main-title');
-  const yScale = { title: { display: true, text: paramLabel } };
-
-  if (isMonth) {
-    const rows = (data.dailyRows && data.dailyRows.length) ? data.dailyRows : data.rows;
-    if (!rows || !rows.length) return;
-    if (titleEl) titleEl.textContent = `Leaching Trend — All Tanks (${paramLabel})`;
-    const labels = rows.map(r => r.__date || r.__time || '');
-    const datasets = LEACH_LT_TANKS.map(tank => ({
-      label: tank,
-      data: rows.map(r => { const v = parseFloat(r[keyFn(tank)]); return isNaN(v) ? null : v; }),
-      borderColor: LEACH_TANK_COLORS[tank] || '#888',
-      backgroundColor: 'transparent',
-      fill: false, tension: .3, pointRadius: 2, borderWidth: 1.75, spanGaps: true,
-    }));
-    buildChart('chart-leach-main', labels, datasets, { y: yScale }, {
-      onPointClick: _drillClickHandler(data, isMonth),
-    });
-  } else {
-    // Day view: one bar per tank = that day's average reading.
-    const rows = data.rows || [];
-    if (titleEl) titleEl.textContent = `Tank Comparison — ${paramLabel}${data.date ? ' · ' + data.date : ''}`;
-    const avgFor = (tank) => {
-      const vals = rows.map(r => parseFloat(r[keyFn(tank)])).filter(v => !isNaN(v));
-      return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : null;
-    };
-    const datasets = [{
-      label: paramLabel,
-      data: LEACH_LT_TANKS.map(avgFor),
-      backgroundColor: LEACH_LT_TANKS.map(t => LEACH_TANK_COLORS[t] || '#888'),
-      type: 'bar',
-    }];
-    buildChart('chart-leach-main', LEACH_LT_TANKS, datasets, { y: yScale }, { noZoom: true });
-  }
-}
-
-// Bar chart of every leach/discharge tank's latest reading for the currently
-// selected heatmap parameter — a compact "leach train health" snapshot.
-function buildLeachTankProfile(data, param) {
-  const rows = data.rows || [];
-  const latest = rows[rows.length - 1];
-  if (!latest) return;
-
-  const paramKeyMap = {
-    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`,
-    au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
-  };
-  const dtKeyMap = {
-    nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`, au: t => `${t} Au in Liquor (ppm)`,
-  };
-  const btnLabel = document.querySelector(`#lhm-btn-${param}`) ? document.querySelector(`#lhm-btn-${param}`).textContent : param;
-  const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
-  buildTankProfileChart('chart-leach-tankprofile', latest, LEACH_LT_TANKS, keyFn, btnLabel);
-
-  // DT tanks only make sense for nacn/au/ph, same as the heatmap logic
-  const dtWrap = document.getElementById('leach-tankprofile-dt-wrap');
-  if (dtKeyMap[param]) {
-    if (dtWrap) dtWrap.style.display = '';
-    buildTankProfileChart('chart-leach-tankprofile-dt', latest, LEACH_DT_TANKS, dtKeyMap[param], btnLabel);
-  } else {
-    if (dtWrap) dtWrap.style.display = 'none';
-    if (STATE.charts['chart-leach-tankprofile-dt']) {
-      try { STATE.charts['chart-leach-tankprofile-dt'].destroy(); } catch (e) {}
-      delete STATE.charts['chart-leach-tankprofile-dt'];
-    }
-  }
-}
 
 const CARBON_TANKS_LIST = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
 
