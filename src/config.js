@@ -165,20 +165,17 @@ function _buildLeachingParams() {
   return params;
 }
 
+// "Slurry Samples for Au in Solids" — one Au (ppm) reading per tank per day.
+// LT3 is real for slurry sampling even though it isn't a Leaching tank
+// (Leaching only runs LT4-LT10).
+const SLURRY_AU_TANKS = ['LT3', ...LT_TANKS, ...DT_TANKS];
+
 function _buildSlurryParams() {
   const params = [
     { key: 'Date', label: 'Date', unit: '', isText: true },
-    { key: 'Ball Mill Feed NaCN (ppm)', label: 'Ball Mill Feed NaCN', unit: 'ppm' },
-    { key: 'Ball Mill Feed pH',         label: 'Ball Mill Feed pH', unit: '' },
-    { key: 'Ball Mill Feed Au (ppm)',   label: 'Ball Mill Feed Au', unit: 'ppm' },
-    { key: 'CCD O/F NaCN (ppm)',        label: 'CCD O/F NaCN', unit: 'ppm' },
-    { key: 'CCD O/F pH',               label: 'CCD O/F pH', unit: '' },
-    { key: 'CCD O/F Au (ppm)',         label: 'CCD O/F Au', unit: 'ppm' },
   ];
-  LT_TANKS.forEach(t => {
-    params.push({ key: `${t} Slurry NaCN (ppm)`, label: 'Slurry NaCN', unit: 'ppm', tank: t, tankGroup: 'Slurry' });
-    params.push({ key: `${t} Slurry pH`,         label: 'Slurry pH',   unit: '',    tank: t, tankGroup: 'Slurry' });
-    params.push({ key: `${t} Slurry Au (ppm)`,   label: 'Slurry Au',   unit: 'ppm', tank: t, tankGroup: 'Slurry' });
+  SLURRY_AU_TANKS.forEach(t => {
+    params.push({ key: `${t} Au (ppm)`, label: 'Au in Solids', unit: 'ppm', tank: t, tankGroup: 'Slurry', limitId: `SLURRY_AU_${t}`, limitLabel: `${t} — Au in Solids (ppm)` });
   });
   params.push({ key: 'Notes', label: 'Notes', unit: '', isText: true });
   return params;
@@ -360,7 +357,7 @@ function canManageTargets(role) {
 }
 
 module.exports = {
-  DB_START, SH, LT_TANKS, DT_TANKS, AU_LIMIT_TANKS, CARBON_TANKS,
+  DB_START, SH, LT_TANKS, DT_TANKS, AU_LIMIT_TANKS, CARBON_TANKS, SLURRY_AU_TANKS,
   SECTIONS, ROLE_CONFIG, SHIFT_OPTS, LEACH_TIMES, TIME_SHEETS,
   SECTION_CHEMICALS, ENTRY_SHEETS_BY_ROLE, SHEET_PARAMS,
   SECTION_GROUPS, HIDDEN_FROM_DASHBOARD, GROUP_TAB_LABELS,

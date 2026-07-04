@@ -532,7 +532,9 @@ function switchSubTab(subKey) {
 }
 
 function subTabsHtml() {
-  const members = (STATE.sectionGroups || {})[STATE.currentSec];
+  // Slurry Samples is folded into the Leaching page as an extra chart block
+  // (see loadSlurryBlock) rather than being its own tab.
+  const members = ((STATE.sectionGroups || {})[STATE.currentSec] || []).filter(m => m !== 'slurry');
   if (!members || members.length < 2) return '';
   return `<div class="sub-tabs">${members.map(m =>
     `<button class="sub-tab ${m === STATE.currentSubSec ? 'active' : ''}" onclick="switchSubTab('${m}')">${_subTabLabel(m)}</button>`
@@ -652,6 +654,11 @@ function renderDetailData(activeKey, data) {
     buildTargetGauges(data);
     if (showProdTrend) buildProductionTrendChart(activeKey, data);
   }, 60);
+
+  // Slurry Samples isn't its own page/tab — it's fetched separately (its
+  // own storage, own filter-respecting query) and rendered as an extra
+  // block on the Leaching page, right below the Leaching Trend chart.
+  if (activeKey === 'leaching') loadSlurryBlock(detFilterPayload());
 }
 
 // ─── SECTION RENDERER ─────────────────────────────────────────────────────────
@@ -781,6 +788,7 @@ function renderLeaching(data) {
       </div>
       <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-prod-trend"></canvas></div>
     </div>
+    ${slurryBlockPlaceholderHtml()}
     ${stoppagesHtml(data.stoppages)}`;
 }
 
@@ -1191,7 +1199,7 @@ function applyTrendYRange() {
   const min = minV === '' ? null : parseFloat(minV);
   const max = maxV === '' ? null : parseFloat(maxV);
   saveTrendYRange(sectionKey, isNaN(min) ? null : min, isNaN(max) ? null : max);
-  buildProductionTrendChart(sectionKey, STATE.lastSectionData);
+  buildProductionTrendChart(sectionKey, STATE._trendData, STATE._trendCanvasId);
 }
 
 function _trendSeriesKey(sectionKey) {
@@ -1210,6 +1218,15 @@ function loadTrendSeries(sectionKey, data) {
     return LEACH_LT_TANKS.map((t, i) => ({
       id: 'def_' + t, paramKey: `${t} NaCN (ppm)`, type: 'line',
       color: LEACH_TANK_COLORS[t] || TREND_PALETTE[i % TREND_PALETTE.length],
+    }));
+  }
+
+  // Slurry's default (month/range view only — day view is a fixed bar
+  // chart that doesn't use this): every tank's Au in Solids as a line.
+  if (sectionKey === 'slurry') {
+    return SLURRY_TANKS.map((t, i) => ({
+      id: 'def_' + t, paramKey: `${t} Au (ppm)`, type: 'line',
+      color: SLURRY_TANK_COLORS[t] || TREND_PALETTE[i % TREND_PALETTE.length],
     }));
   }
 
@@ -1317,14 +1334,15 @@ function buildTargetGauges(data) {
   });
 }
 
-function productionTrendBlockHtml(title) {
+function productionTrendBlockHtml(title, canvasId, gearOnclick) {
+  canvasId = canvasId || 'chart-prod-trend';
   return `
     <div class="chart-wrap">
       <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center">
         <div class="chart-title">${title || 'Production Trend'}</div>
-        <button class="chart-gear-btn" onclick="openTrendSeriesManager()" title="Add or edit chart parameters">⚙</button>
+        <button class="chart-gear-btn" onclick="${gearOnclick || 'openTrendSeriesManager()'}" title="Add or edit chart parameters">⚙</button>
       </div>
-      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-prod-trend"></canvas></div>
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="${canvasId}"></canvas></div>
     </div>`;
 }
 
@@ -1357,8 +1375,8 @@ function toggleLeachFollow() {
   if (window._leachData) buildProductionTrendChart('leaching', window._leachData);
 }
 
-function buildProductionTrendChart(sectionKey, data) {
-  const canvasId = 'chart-prod-trend';
+function buildProductionTrendChart(sectionKey, data, canvasId) {
+  canvasId = canvasId || 'chart-prod-trend';
   const canvas = document.getElementById(canvasId);
   if (!canvas) return;
   if (STATE.charts[canvasId]) {
@@ -1438,9 +1456,9 @@ function buildProductionTrendChart(sectionKey, data) {
   });
 }
 
-function openTrendSeriesManager() {
-  const data = STATE.lastSectionData;
-  const sectionKey = STATE.currentSubSec || STATE.currentSec;
+function openTrendSeriesManager(sectionKeyOverride, canvasIdOverride, dataOverride) {
+  const sectionKey = sectionKeyOverride || STATE.currentSubSec || STATE.currentSec;
+  const data = dataOverride || (sectionKeyOverride ? window['_' + sectionKeyOverride + 'Data'] : STATE.lastSectionData);
   if (!data) { showToast('Open a section first', 'error'); return; }
 
   const chartable = _chartableParams(data);
@@ -1448,6 +1466,8 @@ function openTrendSeriesManager() {
   chartable.forEach(p => { paramsByKey[p.key] = p; });
 
   STATE._trendSectionKey = sectionKey;
+  STATE._trendCanvasId = canvasIdOverride || 'chart-prod-trend';
+  STATE._trendData = data;
   STATE._ccSelectedTanks = new Set();
   _ccToggleSection(null); // collapse both panels on open
   _renderTrendSeriesList(sectionKey, paramsByKey);
@@ -1587,7 +1607,7 @@ function _ccToggleTankChip(btn) {
 
 function addTrendSeries() {
   const sectionKey = STATE._trendSectionKey;
-  const data = STATE.lastSectionData;
+  const data = STATE._trendData;
   const type = document.getElementById('cc-add-type').value;
   const color = document.getElementById('cc-add-color').value;
   const tankMultiWrap = document.getElementById('cc-add-tank-multiwrap');
@@ -1614,39 +1634,39 @@ function addTrendSeries() {
   const paramsByKey = {};
   _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
   _renderTrendSeriesList(sectionKey, paramsByKey);
-  buildProductionTrendChart(sectionKey, data);
+  buildProductionTrendChart(sectionKey, data, STATE._trendCanvasId);
 }
 
 function changeTrendSeriesType(seriesId, type) {
   const sectionKey = STATE._trendSectionKey;
-  const data = STATE.lastSectionData;
+  const data = STATE._trendData;
   const series = loadTrendSeries(sectionKey, data);
   const s = series.find(x => x.id === seriesId);
   if (s) s.type = type;
   saveTrendSeries(sectionKey, series);
-  buildProductionTrendChart(sectionKey, data);
+  buildProductionTrendChart(sectionKey, data, STATE._trendCanvasId);
 }
 
 function changeTrendSeriesColor(seriesId, color) {
   const sectionKey = STATE._trendSectionKey;
-  const data = STATE.lastSectionData;
+  const data = STATE._trendData;
   const series = loadTrendSeries(sectionKey, data);
   const s = series.find(x => x.id === seriesId);
   if (s) s.color = color;
   saveTrendSeries(sectionKey, series);
-  buildProductionTrendChart(sectionKey, data);
+  buildProductionTrendChart(sectionKey, data, STATE._trendCanvasId);
 }
 
 function removeTrendSeries(seriesId) {
   const sectionKey = STATE._trendSectionKey;
-  const data = STATE.lastSectionData;
+  const data = STATE._trendData;
   const series = loadTrendSeries(sectionKey, data).filter(s => s.id !== seriesId);
   saveTrendSeries(sectionKey, series);
 
   const paramsByKey = {};
   _chartableParams(data).forEach(p => { paramsByKey[p.key] = p; });
   _renderTrendSeriesList(sectionKey, paramsByKey);
-  buildProductionTrendChart(sectionKey, data);
+  buildProductionTrendChart(sectionKey, data, STATE._trendCanvasId);
 }
 
 function buildSectionCharts(data) {
@@ -1696,6 +1716,83 @@ const LEACH_TANK_COLORS = {
   LT4: '#C0392B', LT5: '#2471A3', LT6: '#1A7A4A', LT7: '#B7950B',
   LT8: '#7D3C98', LT9: '#D35400', LT10: '#16A085',
 };
+
+// Slurry samples tanks (LT3-LT10, DT1-DT4) — reuses the Leaching colors for
+// the shared tanks and extends with a fixed color each for LT3 and the
+// detox tanks, so a tank is the same color everywhere it appears.
+const SLURRY_TANKS = ['LT3', ...LEACH_LT_TANKS, ...LEACH_DT_TANKS];
+const SLURRY_TANK_COLORS = {
+  LT3: '#E67E22', ...LEACH_TANK_COLORS,
+  DT1: '#2E86C1', DT2: '#8E44AD', DT3: '#229954', DT4: '#CB4335',
+};
+
+// ─── SLURRY SAMPLES ("Au in Solids") — embedded below the Leaching Trend ───
+// Not a real section page (no sub-tab) — fetched and rendered as an extra
+// block on the Leaching detail page. Day view is a fixed bar chart (tanks
+// on the x-axis, one color each, no customizer); month/range view is the
+// same customizable multi-series chart Leaching/Crushing use, defaulting
+// to every tank's Au as its own colored line.
+window._slurryData = null;
+
+function slurryBlockPlaceholderHtml() {
+  return `<div class="chart-wrap" id="slurry-block-wrap">
+    <div class="chart-title">Slurry — Au in Solids</div>
+    <div class="loading"><div class="spinner"></div>Loading…</div>
+  </div>`;
+}
+
+async function loadSlurryBlock(filterPayload) {
+  const wrap = document.getElementById('slurry-block-wrap');
+  if (!wrap) return; // user navigated away before this resolved
+  const data = await apiCached('section', { section: 'slurry', ...filterPayload });
+  const wrapNow = document.getElementById('slurry-block-wrap'); // re-check: still on this page?
+  if (!wrapNow) return;
+
+  if (!data || data.error || !data.hasData) {
+    wrapNow.outerHTML = `<div class="chart-wrap" id="slurry-block-wrap">
+      <div class="chart-title">Slurry — Au in Solids</div>
+      <div class="nodata">No slurry data for this period.</div>
+    </div>`;
+    return;
+  }
+
+  window._slurryData = data;
+  const isMonth = data.isAggregate || STATE.detailMode !== 'date';
+
+  if (isMonth) {
+    wrapNow.outerHTML = `<div class="chart-wrap" id="slurry-block-wrap">
+      <div class="chart-title-row" style="display:flex;justify-content:space-between;align-items:center">
+        <div class="chart-title">Slurry — Au in Solids</div>
+        <button class="chart-gear-btn" onclick="openTrendSeriesManager('slurry','chart-slurry-trend')" title="Add or edit tanks">⚙</button>
+      </div>
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-slurry-trend"></canvas></div>
+    </div>`;
+    setTimeout(() => buildProductionTrendChart('slurry', data, 'chart-slurry-trend'), 30);
+  } else {
+    wrapNow.outerHTML = `<div class="chart-wrap" id="slurry-block-wrap">
+      <div class="chart-title">Slurry — Au in Solids · ${data.date || ''}</div>
+      <div class="chart-canvas-wrap" style="height:320px"><canvas id="chart-slurry-trend"></canvas></div>
+    </div>`;
+    setTimeout(() => buildSlurryDayBarChart(data), 30);
+  }
+}
+
+// Day view: one bar per tank (fixed, not customizable) — that day's Au
+// in Solids reading, LT3 through DT4, each in its own fixed tank color.
+function buildSlurryDayBarChart(data) {
+  const canvasId = 'chart-slurry-trend';
+  const rows = data.rows || [];
+  const latest = rows[rows.length - 1];
+  if (!latest) return;
+  const vals = SLURRY_TANKS.map(t => { const v = parseFloat(latest[`${t} Au (ppm)`]); return isNaN(v) ? null : v; });
+  const yRange = loadTrendYRange('slurry');
+  const yScale = { title: { display: true, text: 'Au (ppm)' } };
+  if (yRange.min !== null) yScale.min = yRange.min;
+  if (yRange.max !== null) yScale.max = yRange.max;
+  buildChart(canvasId, SLURRY_TANKS, [
+    { label: 'Au in Solids (ppm)', data: vals, backgroundColor: SLURRY_TANKS.map(t => SLURRY_TANK_COLORS[t] || '#888'), type: 'bar' },
+  ], { y: yScale }, { noZoom: true });
+}
 
 const CARBON_TANKS_LIST = ['LT4','LT5','LT6','LT7','LT8','LT9','LT10'];
 
