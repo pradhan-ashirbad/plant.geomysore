@@ -1101,7 +1101,13 @@ function buildChart(canvasId, labels, datasets, scales = {}, opts = {}) {
     zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
   } : undefined;
 
+  // Chart.js v4 needs a base type; per-series `type` still overrides it for
+  // mixed charts. Without this, datasets that omit `type` (e.g. plain line
+  // series) render nothing.
+  const baseType = (datasets[0] && datasets[0].type) || 'line';
+
   STATE.charts[canvasId] = new Chart(canvas, {
+    type: baseType,
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -1492,37 +1498,57 @@ const LEACH_TANK_COLORS = {
   LT8: '#7D3C98', LT9: '#D35400', LT10: '#16A085',
 };
 
-// Plots every leach tank's chosen parameter (NaCN/pH/Au/DO — same selector
-// as the heatmap) as one colored line each, so all tanks compare at a
-// glance instead of viewing one tank at a time via a dropdown.
+// The single flexible leaching chart, driven by the same parameter selector
+// as the heatmap (NaCN/pH/Au/DO). It reshapes itself by view mode:
+//   • Month/range → one colored line per tank across dates (compare tanks
+//     over time), with zoom/pan and click-to-drill-into-a-date.
+//   • Day → a bar per tank for the selected day (compare tanks side by side).
+// Legend entries toggle individual tanks on/off; tooltips, colors, y-axis
+// label and title all follow the selected parameter — no page refresh.
 function buildLeachMultiTankChart(data, param) {
   const isMonth = data.isAggregate || STATE.detailMode !== 'date';
-  const rows = isMonth ? (data.dailyRows && data.dailyRows.length ? data.dailyRows : data.rows) : data.rows;
-  if (!rows || !rows.length) return;
-
   const paramKeyMap = {
     nacn: t => `${t} NaCN (ppm)`, ph: t => `${t} pH`,
     au:   t => `${t} Au in Liquor (ppm)`, do: t => `${t} DO (ppm)`,
   };
   const keyFn = paramKeyMap[param] || paramKeyMap.nacn;
   const btnEl = document.getElementById('lhm-btn-' + param);
-  const paramLabel = btnEl ? btnEl.textContent : param;
-
-  const labels = rows.map(r => r.__date || r.__time || '');
-  const datasets = LEACH_LT_TANKS.map(tank => ({
-    label: tank,
-    data: rows.map(r => { const v = parseFloat(r[keyFn(tank)]); return isNaN(v) ? null : v; }),
-    borderColor: LEACH_TANK_COLORS[tank] || '#888',
-    backgroundColor: 'transparent',
-    fill: false, tension: .3, pointRadius: 2, borderWidth: 1.75,
-  }));
+  const paramLabel = (btnEl ? btnEl.textContent : param).trim();
 
   const titleEl = document.getElementById('chart-leach-main-title');
-  if (titleEl) titleEl.textContent = `Leaching Trend — All Tanks (${paramLabel})`;
+  const yScale = { title: { display: true, text: paramLabel } };
 
-  buildChart('chart-leach-main', labels, datasets, {}, {
-    onPointClick: _drillClickHandler(data, isMonth),
-  });
+  if (isMonth) {
+    const rows = (data.dailyRows && data.dailyRows.length) ? data.dailyRows : data.rows;
+    if (!rows || !rows.length) return;
+    if (titleEl) titleEl.textContent = `Leaching Trend — All Tanks (${paramLabel})`;
+    const labels = rows.map(r => r.__date || r.__time || '');
+    const datasets = LEACH_LT_TANKS.map(tank => ({
+      label: tank,
+      data: rows.map(r => { const v = parseFloat(r[keyFn(tank)]); return isNaN(v) ? null : v; }),
+      borderColor: LEACH_TANK_COLORS[tank] || '#888',
+      backgroundColor: 'transparent',
+      fill: false, tension: .3, pointRadius: 2, borderWidth: 1.75, spanGaps: true,
+    }));
+    buildChart('chart-leach-main', labels, datasets, { y: yScale }, {
+      onPointClick: _drillClickHandler(data, isMonth),
+    });
+  } else {
+    // Day view: one bar per tank = that day's average reading.
+    const rows = data.rows || [];
+    if (titleEl) titleEl.textContent = `Tank Comparison — ${paramLabel}${data.date ? ' · ' + data.date : ''}`;
+    const avgFor = (tank) => {
+      const vals = rows.map(r => parseFloat(r[keyFn(tank)])).filter(v => !isNaN(v));
+      return vals.length ? +(vals.reduce((a, b) => a + b, 0) / vals.length).toFixed(2) : null;
+    };
+    const datasets = [{
+      label: paramLabel,
+      data: LEACH_LT_TANKS.map(avgFor),
+      backgroundColor: LEACH_LT_TANKS.map(t => LEACH_TANK_COLORS[t] || '#888'),
+      type: 'bar',
+    }];
+    buildChart('chart-leach-main', LEACH_LT_TANKS, datasets, { y: yScale }, { noZoom: true });
+  }
 }
 
 // Bar chart of every leach/discharge tank's latest reading for the currently
