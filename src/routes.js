@@ -10,6 +10,7 @@ const importer = require('./import');
 const exporter = require('./export');
 const leachHistory = require('../db/migrate-leaching-history');
 const detoxHistory = require('../db/migrate-detox-history');
+const slurryHistory = require('../db/migrate-slurry-history');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -139,7 +140,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
 // terminal. Both files go through the exact same parsing + db.appendRow
 // path those scripts use — this route is just a browser-facing wrapper.
 router.post('/admin/import-leaching-history',
-  upload.fields([{ name: 'leaching', maxCount: 1 }, { name: 'detox', maxCount: 1 }]),
+  upload.fields([{ name: 'leaching', maxCount: 1 }, { name: 'detox', maxCount: 1 }, { name: 'slurry', maxCount: 1 }]),
   async (req, res) => {
     try {
       const sess = auth.validateSession(req.body.token);
@@ -147,8 +148,8 @@ router.post('/admin/import-leaching-history',
       if (sess.role !== 'supervisor') return res.status(403).json({ error: 'Access denied.' });
 
       const files = req.files || {};
-      if (!files.leaching && !files.detox) {
-        return res.status(400).json({ error: 'Upload at least one workbook (Leaching and/or Detox).' });
+      if (!files.leaching && !files.detox && !files.slurry) {
+        return res.status(400).json({ error: 'Upload at least one workbook (Leaching, Detox, and/or Slurry).' });
       }
 
       const defaultYear = req.body.year && /^\d{4}$/.test(req.body.year) ? req.body.year : null;
@@ -163,6 +164,11 @@ router.post('/admin/import-leaching-history',
         const skippedCols = new Set();
         const r = await detoxHistory.processWorkbook(files.detox[0].buffer, skippedCols);
         result.detox = { ...r, skippedCols: Array.from(skippedCols).sort() };
+      }
+      if (files.slurry) {
+        const skippedCols = new Set();
+        const r = await slurryHistory.processWorkbook(files.slurry[0].buffer, skippedCols);
+        result.slurry = { ...r, skippedCols: Array.from(skippedCols).sort() };
       }
 
       res.json({ success: true, ...result });

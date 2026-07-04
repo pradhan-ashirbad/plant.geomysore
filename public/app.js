@@ -2338,17 +2338,19 @@ async function doLeachHistoryImport() {
   const resultEl = document.getElementById('leach-hist-result');
   const leachFile = document.getElementById('leach-hist-file').files[0];
   const detoxFile = document.getElementById('detox-hist-file').files[0];
+  const slurryFile = document.getElementById('slurry-hist-file').files[0];
   const year = document.getElementById('leach-hist-year').value.trim();
 
-  if (!leachFile && !detoxFile) {
-    msg.textContent = 'Choose at least one file (Leaching and/or Detox).';
+  const chosen = [leachFile, detoxFile, slurryFile].filter(Boolean);
+  if (!chosen.length) {
+    msg.textContent = 'Choose at least one file (Leaching, Detox, and/or Slurry).';
     msg.className = 'form-msg error'; msg.style.display = 'block';
     return;
   }
 
-  if (!leachFile || !detoxFile) {
-    const missing = !leachFile ? 'Leaching CN/pH Log' : 'Detox Log';
-    const proceed = confirm(`You haven't selected a ${missing} file — only the other one will be imported. Continue with just one file?`);
+  if (chosen.length < 3) {
+    const missing = [!leachFile && 'Leaching CN/pH Log', !detoxFile && 'Detox Log', !slurryFile && 'Slurry Samples'].filter(Boolean).join(', ');
+    const proceed = confirm(`You haven't selected: ${missing}. Only the chosen file(s) will be imported. Continue?`);
     if (!proceed) return;
   }
 
@@ -2359,6 +2361,7 @@ async function doLeachHistoryImport() {
   const formData = new FormData();
   if (leachFile) formData.append('leaching', leachFile);
   if (detoxFile) formData.append('detox', detoxFile);
+  if (slurryFile) formData.append('slurry', slurryFile);
   if (year) formData.append('year', year);
   formData.append('token', STATE.token);
 
@@ -2387,9 +2390,10 @@ function leachHistoryResultHtml(data) {
       <div style="font-size:12px;color:var(--txt3);margin-top:4px">Nothing was imported for ${title} — its file field was empty on this upload.</div>
     </div>`;
     const zeroRows = r.rowsImported === 0;
+    const sheetsNote = r.sheetsProcessed !== undefined ? `${r.sheetsProcessed} day-sheet(s) found, ` : '';
     let html = `<div class="form-card" style="margin-top:10px${zeroRows ? ';border-color:var(--crit)' : ''}">
       <div style="font-weight:700;color:var(--txt);margin-bottom:6px">${zeroRows ? '⚠ ' : ''}${title}</div>
-      <div style="font-size:12.5px;color:${zeroRows ? 'var(--crit)' : 'var(--txt2)'}">${r.sheetsProcessed} day-sheet(s) found, <b>${r.rowsImported} reading row(s)</b> imported${zeroRows ? ' — check the file is the right one and has recognizable headers' : ''}.</div>`;
+      <div style="font-size:12.5px;color:${zeroRows ? 'var(--crit)' : 'var(--txt2)'}">${sheetsNote}<b>${r.rowsImported} reading row(s)</b> imported${zeroRows ? ' — check the file is the right one and has recognizable headers' : ''}.</div>`;
     if (r.undatedSheets && r.undatedSheets.length) {
       html += `<div style="margin-top:8px;font-size:11.5px;color:var(--txt3)">
         <b>Sheets with no in-cell date:</b><br>${r.undatedSheets.map(s => escapeHtml(s)).join('<br>')}
@@ -2403,7 +2407,7 @@ function leachHistoryResultHtml(data) {
     html += '</div>';
     return html;
   };
-  return section('Leaching', data.leaching) + section('Detox', data.detox);
+  return section('Leaching', data.leaching) + section('Detox', data.detox) + section('Slurry', data.slurry);
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────
