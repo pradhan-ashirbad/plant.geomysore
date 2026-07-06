@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(node --check src/data.js)",
+      "Bash(node \"C:\\\\Users\\\\ASHIRB~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Ashirbad-Pradhan-Desktop-coding-plant-geomysore-main\\\\b5cb152c-a683-4da8-80ba-0dc59db1096e\\\\scratchpad\\\\test_tz_fix.js\")",
+      "PowerShell(Get-NetTCPConnection -LocalPort 3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 OwningProcess | ForEach-Object { Get-Process -Id $_.OwningProcess | Select-Object Id, ProcessName, Path })",
+      "mcp__8c72197f-cf5a-439d-b135-d46f53d4ef64__list_projects",
+      "mcp__8c72197f-cf5a-439d-b135-d46f53d4ef64__execute_sql",
+      "mcp__8c72197f-cf5a-439d-b135-d46f53d4ef64__apply_migration",
+      "Bash(node --check db/migrate-filterpress-history.js)",
+      "Bash(node db/migrate-filterpress-history.js \"E:\\\\milling.xlsx\")",
+      "Bash(node -e ' *)",
+      "Bash(node --check src/typedTables.js)",
+      "Bash(node --check public/app.js)",
+      "Bash(node \"C:\\\\Users\\\\ASHIRB~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Ashirbad-Pradhan-Desktop-coding-plant-geomysore-main\\\\b5cb152c-a683-4da8-80ba-0dc59db1096e\\\\scratchpad\\\\trend_harness.js\")"
+    ]
+  }
+}

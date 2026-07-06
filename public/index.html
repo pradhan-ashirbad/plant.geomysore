@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Jonnagiri Gold Project — Plant Monitoring</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     LOGIN PAGE
+════════════════════════════════════════════════════════════════ -->
+<div id="page-login" style="position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:100">
+  <div class="login-card">
+    <div class="login-brand">
+      <div class="login-logo">G</div>
+      <div>
+        <div style="font-weight:700;color:var(--maroon);font-size:15px">Geomysore</div>
+        <div style="font-size:11px;color:var(--txt3)">Jonnagiri Gold Project</div>
+      </div>
+    </div>
+    <div class="login-title">Plant Monitoring System</div>
+    <div class="form-row">
+      <label>Username</label>
+      <input type="text" id="li-user" placeholder="username" autocomplete="username">
+    </div>
+    <div class="form-row">
+      <label>Password</label>
+      <input type="password" id="li-pass" placeholder="password" autocomplete="current-password">
+    </div>
+    <div id="li-err" style="color:var(--crit);font-size:12px;min-height:16px;margin-bottom:8px"></div>
+    <button class="submit-btn" id="li-btn" onclick="doLogin()">Sign In</button>
+    <div style="margin-top:16px;text-align:center;font-size:11px;color:var(--txt3)">
+      Jonnagiri Gold Project · Plant Operations
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════════
+     APP SHELL
+════════════════════════════════════════════════════════════════ -->
+<div id="app" class="hidden">
+
+  <!-- NAV -->
+  <nav id="nav" style="height:56px;display:flex;align-items:center;justify-content:space-between;padding:0 20px;background:var(--bg2);border-bottom:1px solid var(--bdr);position:sticky;top:0;z-index:50;gap:8px">
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <div style="width:34px;height:34px;background:var(--maroon);border-radius:8px;display:flex;align-items:center;justify-content:center;color:white;font-weight:700;font-size:16px">G</div>
+      <span style="font-weight:700;color:var(--maroon);font-size:14px">Geomysore</span>
+      <span style="color:var(--txt3);font-size:12px">| Jonnagiri Gold</span>
+    </div>
+    <div style="display:flex;gap:4px;flex-wrap:wrap;justify-content:center" id="nav-tabs">
+      <button class="nav-tab active" onclick="showPage('dashboard')">Dashboard</button>
+      <button class="nav-tab" onclick="showPage('alerts')" id="tab-alerts">Alerts</button>
+      <button class="nav-tab hidden" onclick="showPage('entry')" id="tab-entry">Data Entry</button>
+      <button class="nav-tab hidden" onclick="showPage('targets')" id="tab-targets">Targets</button>
+      <button class="nav-tab hidden" onclick="showPage('report')" id="tab-report">Monthly Report</button>
+      <button class="nav-tab hidden" onclick="showPage('admin')" id="tab-admin">Admin</button>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;flex-shrink:0">
+      <span id="nav-name" style="font-size:12px;color:var(--txt2)"></span>
+      <span id="nav-role" class="role-tag"></span>
+      <span id="nav-clock" style="font-family:var(--mono);font-size:11px;color:var(--txt3)"></span>
+      <button class="btn-cancel" onclick="doLogout()">Sign Out</button>
+    </div>
+  </nav>
+
+  <!-- ─── DASHBOARD ─── -->
+  <div id="page-dashboard" class="page hidden">
+    <div style="padding:20px">
+      <div class="filter-bar">
+        <div style="display:flex;border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+          <button class="view-btn active" id="vbtn-date" onclick="setViewMode('date')">By Date</button>
+          <button class="view-btn" id="vbtn-month" onclick="setViewMode('month')">By Month</button>
+          <button class="view-btn" id="vbtn-range" onclick="setViewMode('range')">Range</button>
+        </div>
+        <input type="date" id="dash-date" class="filter-input">
+        <input type="month" id="dash-month" class="filter-input" style="display:none">
+        <span id="dash-range-wrap" style="display:none;gap:6px;align-items:center">
+          <input type="date" id="dash-from" class="filter-input">
+          <span style="font-size:11px;color:var(--txt3)">to</span>
+          <input type="date" id="dash-to" class="filter-input">
+        </span>
+        <button onclick="loadDashboard(true)" class="btn-apply">Apply</button>
+        <span id="dash-info" style="font-size:11px;color:var(--txt3)"></span>
+      </div>
+      <div id="dash-kpis" class="kpi-strip"></div>
+      <div id="dash-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── SECTION DETAIL ─── -->
+  <div id="page-detail" class="page hidden">
+    <div style="padding:20px;max-width:1400px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <button onclick="showPage('dashboard')" style="background:var(--bg3);border:1px solid var(--bdr);border-radius:var(--r);padding:6px 12px;cursor:pointer;font-size:12px;color:var(--txt2);flex-shrink:0">← Back</button>
+        <div style="flex:1;min-width:0">
+          <div id="det-title" style="font-size:20px;font-weight:700;color:var(--txt)"></div>
+          <div id="det-sub" style="font-size:11px;color:var(--txt3)"></div>
+        </div>
+        <div style="display:flex;gap:6px;flex-wrap:wrap">
+          <div style="display:flex;border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+            <button class="view-btn active" id="det-vbtn-date" onclick="detSetMode('date')">By Date</button>
+            <button class="view-btn" id="det-vbtn-month" onclick="detSetMode('month')">By Month</button>
+            <button class="view-btn" id="det-vbtn-range" onclick="detSetMode('range')">Range</button>
+          </div>
+          <input type="date" id="det-date" class="filter-input">
+          <input type="month" id="det-month" class="filter-input" style="display:none">
+          <span id="det-range-wrap" style="display:none;gap:6px;align-items:center">
+            <input type="date" id="det-from" class="filter-input">
+            <span style="font-size:11px;color:var(--txt3)">to</span>
+            <input type="date" id="det-to" class="filter-input">
+          </span>
+          <button onclick="loadDetail(true)" class="btn-apply">Go</button>
+          <button onclick="exportSection()" class="btn-export" title="Download as Excel">⬇ Excel</button>
+        </div>
+      </div>
+      <div id="det-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+    </div>
+  </div>
+
+  <!-- ─── ALERTS ─── -->
+  <div id="page-alerts" class="page hidden">
+    <div style="padding:20px;max-width:1200px">
+      <div class="filter-bar">
+        <div style="font-size:18px;font-weight:700;color:var(--txt);margin-right:8px">Alerts</div>
+        <div style="display:flex;border:1px solid var(--bdr);border-radius:var(--r);overflow:hidden">
+          <button class="view-btn active" id="al-vbtn-date" onclick="alSetMode('date')">By Date</button>
+          <button class="view-btn" id="al-vbtn-month" onclick="alSetMode('month')">By Month</button>
+        </div>
+        <input type="date" id="al-date" class="filter-input">
+        <input type="month" id="al-month" class="filter-input" style="display:none">
+        <button onclick="loadAlerts()" class="btn-apply">Apply</button>
+      </div>
+      <div id="alerts-summary" style="display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap"></div>
+      <div id="alerts-content"><div class="nodata">Pick a period and click Apply.</div></div>
+    </div>
+  </div>
+
+  <!-- ─── DATA ENTRY ─── -->
+  <div id="page-entry" class="page hidden">
+    <div style="padding:20px">
+      <div class="form-wrap">
+        <div class="form-card">
+          <div class="form-card-title">Data Entry — <span id="ent-sheet-lbl" style="color:var(--maroon)">Select Section</span></div>
+          <div class="form-grid2">
+            <div class="form-row">
+              <label>Section / Sheet</label>
+              <select id="ent-sheet" onchange="loadEntryForm()">
+                <option value="">— Select —</option>
+              </select>
+            </div>
+            <div class="form-row">
+              <label>Date</label>
+              <input type="date" id="ent-date">
+            </div>
+          </div>
+          <div id="ent-time-row" class="form-row" style="display:none">
+            <label id="ent-time-label">Time / Shift</label>
+            <select id="ent-time"></select>
+          </div>
+        </div>
+        <div id="ent-params"></div>
+        <div class="form-card" id="ent-submit-card" style="display:none">
+          <div class="form-row">
+            <label>Operator Notes (optional)</label>
+            <input type="text" id="ent-notes" placeholder="Any observations or notes…">
+          </div>
+          <button class="submit-btn" id="ent-btn" onclick="submitEntry()">Submit Entry</button>
+          <div id="ent-msg" class="form-msg"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── TARGETS ─── -->
+  <div id="page-targets" class="page hidden">
+    <div style="padding:20px;max-width:1200px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:8px">
+        <div style="font-size:18px;font-weight:700;color:var(--txt)">Production Targets</div>
+        <button onclick="openTargetModal()" style="padding:7px 16px;background:var(--maroon);color:#fff;border:none;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font)">+ Add Target</button>
+      </div>
+      <div id="targets-content">
+        <div class="loading"><div class="spinner"></div>Loading…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── MONTHLY REPORT ─── -->
+  <div id="page-report" class="page hidden">
+    <div style="padding:20px;max-width:1200px">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+        <div style="font-size:18px;font-weight:700;color:var(--txt)">Monthly Report</div>
+        <input type="month" id="report-month" class="filter-input">
+        <button onclick="loadReport()" class="btn-apply">Generate</button>
+        <button onclick="exportReport()" class="btn-export" title="Download as Excel">⬇ Excel</button>
+      </div>
+      <div id="report-content">
+        <div class="nodata">Select a month and click Generate.</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ─── ADMIN ─── -->
+  <div id="page-admin" class="page hidden">
+    <div class="admin-layout">
+      <div class="admin-sidebar">
+        <button class="admin-nav-item active" onclick="adminShowPanel('users')">User Management</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('limits')">Limits Editor</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('chem-inv')">Chemical Inventory</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('import')">Import Data</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('leach-history')">Leaching History Backfill</button>
+        <button class="admin-nav-item" onclick="adminShowPanel('password')">Change Password</button>
+      </div>
+      <div class="admin-content">
+        <!-- Users panel -->
+        <div id="admin-panel-users">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <div style="font-size:16px;font-weight:700;color:var(--txt)">User Management</div>
+            <button onclick="openUserModal()" style="padding:7px 16px;background:var(--maroon);color:#fff;border:none;border-radius:var(--r);font-size:12px;font-weight:600;cursor:pointer;font-family:var(--font)">+ Add User</button>
+          </div>
+          <div id="users-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+        </div>
+
+        <!-- Limits panel -->
+        <div id="admin-panel-limits" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Limits Editor</div>
+          <div id="limits-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+        </div>
+
+        <!-- Chemical Inventory panel -->
+        <div id="admin-panel-chem-inv" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Chemical Inventory</div>
+          <div id="chem-inv-content"><div class="loading"><div class="spinner"></div>Loading…</div></div>
+        </div>
+
+        <!-- Import Data panel -->
+        <div id="admin-panel-import" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Import Data from Excel</div>
+          <div class="form-card" style="max-width:480px">
+            <div class="form-row">
+              <label>Target Sheet</label>
+              <select id="import-sheet"></select>
+            </div>
+            <div class="form-row">
+              <label>Excel File (.xlsx, .xls, .csv)</label>
+              <input type="file" id="import-file" accept=".xlsx,.xls,.csv">
+            </div>
+            <div class="form-row">
+              <label>Mode</label>
+              <select id="import-mode">
+                <option value="append">Append (add to existing data)</option>
+                <option value="replace">Replace (clear sheet first)</option>
+              </select>
+            </div>
+            <div id="import-msg" class="form-msg"></div>
+            <button class="submit-btn" onclick="doImport()" style="margin-top:8px">Upload &amp; Import</button>
+          </div>
+          <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:480px">
+            The first row of your file should be column headers. Column names don't need to match exactly —
+            the importer matches them to the app's expected fields automatically.
+          </div>
+        </div>
+
+        <!-- Leaching History Backfill panel -->
+        <div id="admin-panel-leach-history" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:16px">Leaching History Backfill</div>
+          <div class="form-card" style="max-width:480px">
+            <div class="form-row">
+              <label>Leaching CN/pH Log (.xlsx)</label>
+              <input type="file" id="leach-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Detox Log (.xlsx)</label>
+              <input type="file" id="detox-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Slurry Samples — Au in Solids (.xlsx)</label>
+              <input type="file" id="slurry-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Stoppage Reason log (.xlsx)</label>
+              <input type="file" id="stoppage-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Filter Press log (.xlsx)</label>
+              <input type="file" id="filterpress-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
+              <label>Year override (optional)</label>
+              <input type="text" id="leach-hist-year" placeholder="e.g. 2025 — only needed if a sheet has no date at all and no dated sibling sheet">
+            </div>
+            <div id="leach-hist-msg" class="form-msg"></div>
+            <button class="submit-btn" onclick="doLeachHistoryImport()" style="margin-top:8px">Upload &amp; Backfill</button>
+          </div>
+          <div id="leach-hist-result" style="margin-top:16px;max-width:640px"></div>
+          <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:640px">
+            One-time tool to backfill historical Leaching (LT4-LT10), Detox (DT1-DT4), Slurry Samples
+            (LT3-LT10, DT1-DT4 Au in Solids), Filter Press, and Stoppage Reason readings from the plant's Excel
+            logs. Upload any combination of the files. Safe to re-run for the tank sheets and Filter Press
+            (re-uploading rewrites the same readings). Note: only the stoppage log has no unique key, so
+            re-uploading it duplicates its rows — upload that one only once.
+          </div>
+        </div>
+
+        <!-- Change Password panel -->
+        <div id="admin-panel-password" style="display:none">
+          <div style="font-size:16px;font-weight:700;color:var(--txt);margin-bottom:20px">Change Password</div>
+          <div class="form-card" style="max-width:400px">
+            <div class="form-row">
+              <label>Current Password</label>
+              <input type="password" id="pw-current" placeholder="Current password">
+            </div>
+            <div class="form-row">
+              <label>New Password</label>
+              <input type="password" id="pw-new" placeholder="New password (min 6 chars)">
+            </div>
+            <div class="form-row">
+              <label>Confirm New Password</label>
+              <input type="password" id="pw-confirm" placeholder="Confirm new password">
+            </div>
+            <div id="pw-msg" class="form-msg"></div>
+            <button class="submit-btn" onclick="doChangePassword()" style="margin-top:8px">Change Password</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div><!-- #app -->
+
+<div id="toast" class="toast"></div>
+
+<!-- ─── MODALS ─── -->
+
+<!-- Target modal -->
+<div id="modal-target" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('target')">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-target-title">Add / Edit Target</div>
+    <div class="form-row">
+      <label>Month (YYYY-MM)</label>
+      <input type="month" id="tgt-month">
+    </div>
+    <div class="form-row">
+      <label>Section</label>
+      <select id="tgt-section" onchange="tgtSectionChanged()"></select>
+    </div>
+    <div class="form-row" id="tgt-paramkey-row">
+      <label>Parameter <span id="tgt-unit-hint" style="color:var(--txt3);font-size:10px"></span></label>
+      <select id="tgt-paramkey" onchange="tgtParamChanged()"></select>
+    </div>
+    <div id="tgt-custom-rows" style="display:none">
+      <div class="form-row">
+        <label>Custom Param ID</label>
+        <input type="text" id="tgt-param-id" placeholder="e.g. CRUSH_PROD">
+      </div>
+      <div class="form-row">
+        <label>Parameter Name</label>
+        <input type="text" id="tgt-param" placeholder="e.g. Crushing Production">
+      </div>
+      <div class="form-row">
+        <label>Unit</label>
+        <input type="text" id="tgt-unit" placeholder="e.g. t">
+      </div>
+    </div>
+    <div class="form-row">
+      <label>Target Value</label>
+      <input type="number" id="tgt-value" placeholder="0" step="any">
+    </div>
+    <div class="form-row">
+      <label>Notes</label>
+      <input type="text" id="tgt-notes" placeholder="Optional notes">
+    </div>
+    <input type="hidden" id="tgt-rownum">
+    <div id="tgt-msg" class="form-msg"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('target')">Cancel</button>
+      <button class="submit-btn" onclick="saveTarget()" style="width:auto;padding:8px 24px">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- User modal -->
+<div id="modal-user" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('user')">
+  <div class="modal-box">
+    <div class="modal-title" id="modal-user-title">Add / Edit User</div>
+    <div class="form-row">
+      <label>Username</label>
+      <input type="text" id="usr-username" placeholder="username">
+    </div>
+    <div class="form-row">
+      <label>Full Name</label>
+      <input type="text" id="usr-name" placeholder="Full Name">
+    </div>
+    <div class="form-row">
+      <label>Role</label>
+      <select id="usr-role">
+        <option value="supervisor">Supervisor</option>
+        <option value="management">Management</option>
+        <option value="process1">Process Operator 1</option>
+        <option value="process2">Process Operator 2</option>
+        <option value="process3">Process Operator 3</option>
+        <option value="meeting">Meeting View</option>
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Email</label>
+      <input type="email" id="usr-email" placeholder="email@example.com">
+    </div>
+    <div class="form-row">
+      <label>Password (leave blank to keep current)</label>
+      <input type="password" id="usr-password" placeholder="New password">
+    </div>
+    <div class="form-row">
+      <label>Active</label>
+      <select id="usr-active">
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <input type="hidden" id="usr-rownum">
+    <div id="usr-msg" class="form-msg"></div>
+    <div class="modal-footer">
+      <button class="btn-cancel" onclick="closeModal('user')">Cancel</button>
+      <button class="submit-btn" onclick="saveUser()" style="width:auto;padding:8px 24px">Save</button>
+    </div>
+  </div>
+</div>
+
+<!-- Chart customization modal -->
+<div id="modal-chart-customize" class="modal-overlay hidden" onclick="if(event.target===this)closeModal('chart-customize')">
+  <div class="modal-box" style="max-width:480px">
+    <div class="modal-title">Customize Chart</div>
+    <div id="cc-series-list" style="max-height:280px;overflow-y:auto;margin-bottom:10px"></div>
+
+    <div style="display:flex;gap:8px;border-top:1px solid var(--bdr);padding-top:10px">
+      <button class="cc-toggle-btn" id="cc-add-toggle" onclick="_ccToggleSection('add')">+ Add series</button>
+      <button class="cc-toggle-btn" id="cc-axis-toggle" onclick="_ccToggleSection('axis')">↕ Axis range</button>
+    </div>
+
+    <div id="cc-add-panel" style="display:none;margin-top:10px">
+      <div id="cc-add-tank-multiwrap" style="display:none;margin-bottom:8px">
+        <label style="font-size:11px;color:var(--txt3);display:block;margin-bottom:4px">Tanks (pick one or more)</label>
+        <div id="cc-add-tank-chips" style="display:flex;flex-wrap:wrap;gap:5px"></div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-row" style="flex:1 1 120px;margin-bottom:0">
+          <label>Parameter</label>
+          <select id="cc-add-param" onchange="_ccRepopulateTanks()"></select>
+        </div>
+        <div class="form-row" style="flex:0 0 78px;margin-bottom:0">
+          <label>Type</label>
+          <select id="cc-add-type">
+            <option value="line">Line</option>
+            <option value="bar">Bar</option>
+            <option value="area">Area</option>
+            <option value="scatter">Scatter</option>
+          </select>
+        </div>
+        <div class="form-row" style="flex:0 0 auto;margin-bottom:0">
+          <label>Color</label>
+          <input type="color" id="cc-add-color" style="width:36px;height:33px;padding:0;border:1px solid var(--bdr);border-radius:var(--r);cursor:pointer">
+        </div>
+        <button class="btn-apply" id="cc-add-btn" onclick="addTrendSeries()" style="flex:0 0 auto">+ Add</button>
+      </div>
+    </div>
+
+    <div id="cc-axis-panel" style="display:none;margin-top:10px">
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div class="form-row" style="flex:1 1 100px;margin-bottom:0">
+          <label>Min <span style="color:var(--txt3);font-weight:400">(auto)</span></label>
+          <input type="number" step="any" id="cc-ymin" class="filter-input" placeholder="auto">
+        </div>
+        <div class="form-row" style="flex:1 1 100px;margin-bottom:0">
+          <label>Max <span style="color:var(--txt3);font-weight:400">(auto)</span></label>
+          <input type="number" step="any" id="cc-ymax" class="filter-input" placeholder="auto">
+        </div>
+        <button class="btn-apply" onclick="applyTrendYRange()" style="flex:0 0 auto">Apply</button>
+      </div>
+    </div>
+
+    <div class="modal-footer">
+      <button class="submit-btn" onclick="closeModal('chart-customize')" style="width:auto;padding:8px 24px">Done</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-zoom@2.0.1/dist/chartjs-plugin-zoom.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
