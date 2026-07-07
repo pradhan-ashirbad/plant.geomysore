@@ -12,7 +12,8 @@
       "Bash(node -e ' *)",
       "Bash(node --check src/typedTables.js)",
       "Bash(node --check public/app.js)",
-      "Bash(node \"C:\\\\Users\\\\ASHIRB~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Ashirbad-Pradhan-Desktop-coding-plant-geomysore-main\\\\b5cb152c-a683-4da8-80ba-0dc59db1096e\\\\scratchpad\\\\trend_harness.js\")"
+      "Bash(node \"C:\\\\Users\\\\ASHIRB~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Ashirbad-Pradhan-Desktop-coding-plant-geomysore-main\\\\b5cb152c-a683-4da8-80ba-0dc59db1096e\\\\scratchpad\\\\trend_harness.js\")",
+      "Bash(git ls-remote *)"
     ]
   }
 }

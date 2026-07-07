@@ -1556,7 +1556,13 @@ function buildProductionTrendChart(sectionKey, data, canvasId) {
     if (yRange.max !== null) scales[axisId].max = yRange.max;
   });
 
+  // Chart.js v4 needs a base `type`; per-series `type` still overrides it for
+  // mixed charts. Without this, a mixed bar+line chart (e.g. adding a line
+  // series onto the default bar) throws instead of rendering.
+  const baseType = (datasets[0] && datasets[0].type) || 'line';
+
   STATE.charts[canvasId] = new Chart(canvas, {
+    type: baseType,
     data: { labels, datasets },
     options: {
       responsive: true, maintainAspectRatio: false,
@@ -1686,6 +1692,10 @@ function _renderTrendSeriesList(sectionKey, paramsByKey) {
 function _ccRepopulateTanks() {
   const chipsEl = document.getElementById('cc-add-tank-chips');
   const addBtn = document.getElementById('cc-add-btn');
+  const tankMultiWrap = document.getElementById('cc-add-tank-multiwrap');
+  // Non-tank sections (Crushing, Filter Press, etc.) hide the tank panel.
+  // Bail out so we don't accidentally disable the "+ Add" button.
+  if (tankMultiWrap && tankMultiWrap.style.display === 'none') return;
   const chartable = STATE._ccChartable || [];
   const used = STATE._ccUsedKeys || new Set();
   if (!chipsEl) return;
