@@ -234,6 +234,16 @@ function _computeAutoCalc(sheetName, colMap, rowArray) {
     const au  = get('Au');
     if (!isNaN(dry) && !isNaN(au)) set('Au (g)', +(dry * au).toFixed(2));
   }
+  if (sheetName === SH.CARBON) {
+    let total = 0, anyTonnage = false;
+    CARBON_TANKS.forEach(t => {
+      const dry = get(`${t} Dry`);
+      if (!isNaN(dry)) set(`${t} C Tonnage`, +(dry * 0.38).toFixed(3));
+      const ct = get(`${t} C Tonnage`);
+      if (!isNaN(ct)) { total += ct; anyTonnage = true; }
+    });
+    if (anyTonnage) set('Total C Dry Weight (Ton)', +total.toFixed(3));
+  }
   if (sheetName === SH.STOPPAGE) {
     const stopIdx  = findColIndex(colMap, 'Stop Time');
     const startIdx = findColIndex(colMap, 'Start Time');
@@ -298,6 +308,19 @@ function _recomputeDisplayAutoCalc(sheetName, rowObj) {
       const au  = num(rowObj['Au']);
       if (!isNaN(dry) && !isNaN(au)) rowObj['Au (g)'] = +(dry * au).toFixed(2);
     }
+  }
+  if (sheetName === SH.CARBON) {
+    let total = 0, anyTonnage = false;
+    CARBON_TANKS.forEach(t => {
+      if (isBlank(rowObj[`${t} C Tonnage`])) {
+        const dry = num(rowObj[`${t} Dry`]);
+        if (!isNaN(dry)) rowObj[`${t} C Tonnage`] = +(dry * 0.38).toFixed(3);
+      }
+      const ct = num(rowObj[`${t} C Tonnage`]);
+      if (!isNaN(ct)) { total += ct; anyTonnage = true; }
+    });
+    // Total is never stored — always recompute it for display.
+    if (anyTonnage) rowObj['Total C Dry Weight (Ton)'] = +total.toFixed(3);
   }
 }
 

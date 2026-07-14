@@ -6,6 +6,7 @@ const { headersFor, parseDateValue } = require('./sheetUtils');
 const typed = require('./typedTables');
 const leaching = require('./leachingStore');
 const slurry = require('./slurryStore');
+const carbon = require('./carbonStore');
 
 // ─── HEADERS (generic sheet_rows sheets only — typed sheets use typedTables) ──
 
@@ -57,6 +58,7 @@ function _entryDateFromRow(headers, rowArray) {
 async function getSheet(sheetName) {
   if (leaching.isLeaching(sheetName)) return leaching.getRows(sheetName);
   if (slurry.isSlurry(sheetName)) return slurry.getRows(sheetName);
+  if (carbon.isCarbon(sheetName)) return carbon.getRows(sheetName);
   if (typed.isTyped(sheetName)) return typed.getRows(sheetName);
 
   const res = await query(
@@ -74,6 +76,7 @@ async function getSheet(sheetName) {
 async function getSheetByDate(sheetName, filter = {}) {
   if (leaching.isLeaching(sheetName)) return leaching.getRowsByDate(sheetName, filter);
   if (slurry.isSlurry(sheetName)) return slurry.getRowsByDate(sheetName, filter);
+  if (carbon.isCarbon(sheetName)) return carbon.getRowsByDate(sheetName, filter);
   if (typed.isTyped(sheetName)) return typed.getRowsByDate(sheetName, filter);
 
   const { date, month, from, to } = filter;
@@ -105,6 +108,7 @@ async function getSheetByDate(sheetName, filter = {}) {
 async function getSheetHeaders(sheetName) {
   if (leaching.isLeaching(sheetName)) return leaching.getHeaders(sheetName);
   if (slurry.isSlurry(sheetName)) return slurry.getHeaders(sheetName);
+  if (carbon.isCarbon(sheetName)) return carbon.getHeaders(sheetName);
   if (typed.isTyped(sheetName)) return typed.getHeaders(sheetName);
   return _ensureHeaders(sheetName);
 }
@@ -124,6 +128,7 @@ async function getSheetFull(sheetName) {
 async function appendRow(sheetName, rowArray) {
   if (leaching.isLeaching(sheetName)) return leaching.appendRow(sheetName, rowArray);
   if (slurry.isSlurry(sheetName)) return slurry.appendRow(sheetName, rowArray);
+  if (carbon.isCarbon(sheetName)) return carbon.appendRow(sheetName, rowArray);
   if (typed.isTyped(sheetName)) return typed.appendRow(sheetName, rowArray);
 
   const headers = await _ensureHeaders(sheetName);
@@ -141,6 +146,7 @@ async function appendRow(sheetName, rowArray) {
 async function updateRow(sheetName, rowNum, rowArray) {
   if (leaching.isLeaching(sheetName)) return leaching.updateRow(sheetName, rowNum, rowArray);
   if (slurry.isSlurry(sheetName)) return slurry.updateRow(sheetName, rowNum, rowArray);
+  if (carbon.isCarbon(sheetName)) return carbon.updateRow(sheetName, rowNum, rowArray);
   if (typed.isTyped(sheetName)) return typed.updateRow(sheetName, rowNum, rowArray);
 
   const offset = rowNum - DB_START;
@@ -175,6 +181,7 @@ async function updateCell(sheetName, row, col, value) {
 async function deleteAllRows(sheetName) {
   if (leaching.isLeaching(sheetName)) return leaching.deleteAllRows(sheetName);
   if (slurry.isSlurry(sheetName)) return slurry.deleteAllRows(sheetName);
+  if (carbon.isCarbon(sheetName)) return carbon.deleteAllRows(sheetName);
   if (typed.isTyped(sheetName)) return typed.deleteAllRows(sheetName);
   await query('DELETE FROM sheet_rows WHERE sheet_name = $1', [sheetName]);
 }

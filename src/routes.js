@@ -13,6 +13,7 @@ const detoxHistory = require('../db/migrate-detox-history');
 const slurryHistory = require('../db/migrate-slurry-history');
 const stoppageHistory = require('../db/migrate-stoppage-history');
 const filterPressHistory = require('../db/migrate-filterpress-history');
+const carbonHistory = require('../db/migrate-carbon-history');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
@@ -142,7 +143,7 @@ router.post('/import', upload.single('file'), async (req, res) => {
 // terminal. Both files go through the exact same parsing + db.appendRow
 // path those scripts use — this route is just a browser-facing wrapper.
 router.post('/admin/import-leaching-history',
-  upload.fields([{ name: 'leaching', maxCount: 1 }, { name: 'detox', maxCount: 1 }, { name: 'slurry', maxCount: 1 }, { name: 'stoppage', maxCount: 1 }, { name: 'filterpress', maxCount: 1 }]),
+  upload.fields([{ name: 'leaching', maxCount: 1 }, { name: 'detox', maxCount: 1 }, { name: 'slurry', maxCount: 1 }, { name: 'stoppage', maxCount: 1 }, { name: 'filterpress', maxCount: 1 }, { name: 'carbon', maxCount: 1 }]),
   async (req, res) => {
     try {
       const sess = auth.validateSession(req.body.token);
@@ -150,8 +151,8 @@ router.post('/admin/import-leaching-history',
       if (sess.role !== 'supervisor') return res.status(403).json({ error: 'Access denied.' });
 
       const files = req.files || {};
-      if (!files.leaching && !files.detox && !files.slurry && !files.stoppage && !files.filterpress) {
-        return res.status(400).json({ error: 'Upload at least one workbook (Leaching, Detox, Slurry, Filter Press, and/or Stoppage).' });
+      if (!files.leaching && !files.detox && !files.slurry && !files.stoppage && !files.filterpress && !files.carbon) {
+        return res.status(400).json({ error: 'Upload at least one workbook (Leaching, Detox, Slurry, Filter Press, Carbon, and/or Stoppage).' });
       }
 
       const defaultYear = req.body.year && /^\d{4}$/.test(req.body.year) ? req.body.year : null;
@@ -180,6 +181,11 @@ router.post('/admin/import-leaching-history',
         const skippedCols = new Set();
         const r = await filterPressHistory.processWorkbook(files.filterpress[0].buffer, skippedCols);
         result.filterpress = { ...r, skippedCols: Array.from(skippedCols).sort() };
+      }
+      if (files.carbon) {
+        const skippedCols = new Set();
+        const r = await carbonHistory.processWorkbook(files.carbon[0].buffer, skippedCols);
+        result.carbon = { ...r, skippedCols: Array.from(skippedCols).sort() };
       }
 
       res.json({ success: true, ...result });

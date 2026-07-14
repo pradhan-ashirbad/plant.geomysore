@@ -186,10 +186,14 @@ function _buildCarbonParams() {
     { key: 'Date', label: 'Date', unit: '', isText: true },
   ];
   CARBON_TANKS.forEach(t => {
-    params.push({ key: `${t} Carbon (g/L)`,     label: 'Carbon g/L',   unit: 'g/L',  tank: t, tankGroup: 'Carbon' });
-    params.push({ key: `${t} Carbon Load (g/t)`, label: 'Carbon Load',  unit: 'g/t',  tank: t, tankGroup: 'Carbon' });
-    params.push({ key: `${t} Au on Carbon (g/t)`,label: 'Au on Carbon', unit: 'g/t',  tank: t, tankGroup: 'Carbon' });
+    params.push({ key: `${t} Wet`,       label: 'Wet',       unit: '',    tank: t, tankGroup: 'Carbon' });
+    params.push({ key: `${t} Dry`,       label: 'Dry',       unit: '',    tank: t, tankGroup: 'Carbon' });
+    params.push({ key: `${t} C Tonnage`, label: 'C Tonnage', unit: 't',   tank: t, tankGroup: 'Carbon', autoCalc: true });
+    params.push({ key: `${t} Au (ppm)`,  label: 'Au',        unit: 'ppm', tank: t, tankGroup: 'Carbon', limitId: `CARBON_AU_${t}`, limitLabel: `${t} — Carbon Au (ppm)` });
   });
+  // Daily total across all tanks — not stored, computed by data.js auto-calc
+  // (sum of the 7 tanks' C Tonnage). Carries its own limit for the Alerts page.
+  params.push({ key: 'Total C Dry Weight (Ton)', label: 'Total C Dry Weight', unit: 't', autoCalc: true, limitId: 'CARBON_TOTAL', limitLabel: 'Total C Dry Weight (Ton)' });
   params.push({ key: 'Notes', label: 'Notes', unit: '', isText: true });
   return params;
 }

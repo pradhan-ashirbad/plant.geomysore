@@ -946,26 +946,44 @@ function renderFilterPress(data) {
 }
 
 // ── Carbon ────────────────────────────────────────────────────────────────────
+// Minimal-but-correct render over the real schema (Wet/Dry/C Tonnage/Au per
+// tank + computed daily Total). The polished day/month charts are built next.
 function renderCarbon(data) {
   const rows = data.rows || [];
-  // Latest row summary
+  // For a single-day view there is one row; for month/range, aggregate across.
+  let totalCarbon = 0, auVals = [];
+  rows.forEach(r => {
+    const tot = parseFloat(r['Total C Dry Weight (Ton)']);
+    if (!isNaN(tot)) totalCarbon += tot;
+    CARBON_TANKS_LIST.forEach(t => { const a = parseFloat(r[`${t} Au (ppm)`]); if (!isNaN(a)) auVals.push(a); });
+  });
+  const avgAu = auVals.length ? auVals.reduce((a,b)=>a+b,0)/auVals.length : 0;
+  const isDay = STATE.detailMode === 'date';
   const latest = rows[rows.length - 1];
+
   return `
-    ${latest ? `<div class="section-block">
-      <div class="section-block-title">Latest Reading — ${latest.__date}</div>
-      <div class="kpi-row-3">
-        ${['LT7','LT8','LT9'].map(t => {
-          const v = latest[`${t} Carbon (g/L)`];
-          return `<div class="kpi-tile"><div class="kpi-label">${t} Carbon</div>
-            <div class="kpi-val">${v !== '' && v !== undefined ? fmt(v,1) : '—'}</div>
-            <div class="kpi-unit">g/L</div></div>`;
-        }).join('')}
+    <div class="kpi-row-3">
+      <div class="kpi-tile">
+        <div class="kpi-label">${isDay ? 'Total C Dry Weight' : 'Total C Dry Weight (sum)'}</div>
+        <div class="kpi-val gold">${fmt(totalCarbon,2)}</div>
+        <div class="kpi-unit">t</div>
       </div>
-    </div>` : ''}
+      <div class="kpi-tile">
+        <div class="kpi-label">Avg Carbon Au</div>
+        <div class="kpi-val">${fmt(avgAu,0)}</div>
+        <div class="kpi-unit">ppm</div>
+      </div>
+      <div class="kpi-tile">
+        <div class="kpi-label">Tanks Reporting</div>
+        <div class="kpi-val">${latest ? CARBON_TANKS_LIST.filter(t => latest[`${t} Dry`] !== '' && latest[`${t} Dry`] !== undefined).length : 0}</div>
+        <div class="kpi-unit">of ${CARBON_TANKS_LIST.length}</div>
+      </div>
+    </div>
     ${latest ? `<div class="section-block">
-      <div class="section-block-title">Carbon Profile — All Tanks</div>
+      <div class="section-block-title">Carbon Au Profile — All Tanks${isDay ? ` (${latest.__date})` : ' (latest day)'}</div>
       <div class="chart-canvas-wrap" style="height:220px"><canvas id="chart-carbon-profile"></canvas></div>
     </div>` : ''}
+    ${stoppagesHtml(data.stoppages)}
     ${genericTableHtml(data)}`;
 }
 
@@ -1925,7 +1943,7 @@ function buildCarbonTankProfile(data) {
   const rows = data.rows || [];
   const latest = rows[rows.length - 1];
   if (!latest) return;
-  buildTankProfileChart('chart-carbon-profile', latest, CARBON_TANKS_LIST, t => `${t} Carbon (g/L)`, 'Carbon (g/L)');
+  buildTankProfileChart('chart-carbon-profile', latest, CARBON_TANKS_LIST, t => `${t} Au (ppm)`, 'Carbon Au (ppm)');
 }
 
 // ─── ENTRY FORM ───────────────────────────────────────────────────────────────
@@ -2466,11 +2484,12 @@ async function doLeachHistoryImport() {
   const slurryFile = document.getElementById('slurry-hist-file').files[0];
   const stoppageFile = document.getElementById('stoppage-hist-file').files[0];
   const filterpressFile = document.getElementById('filterpress-hist-file').files[0];
+  const carbonFile = document.getElementById('carbon-hist-file').files[0];
   const year = document.getElementById('leach-hist-year').value.trim();
 
-  const chosen = [leachFile, detoxFile, slurryFile, stoppageFile, filterpressFile].filter(Boolean);
+  const chosen = [leachFile, detoxFile, slurryFile, stoppageFile, filterpressFile, carbonFile].filter(Boolean);
   if (!chosen.length) {
-    msg.textContent = 'Choose at least one file (Leaching, Detox, Slurry, Filter Press, and/or Stoppage).';
+    msg.textContent = 'Choose at least one file (Leaching, Detox, Slurry, Filter Press, Carbon, and/or Stoppage).';
     msg.className = 'form-msg error'; msg.style.display = 'block';
     return;
   }
@@ -2490,6 +2509,7 @@ async function doLeachHistoryImport() {
   if (slurryFile) formData.append('slurry', slurryFile);
   if (stoppageFile) formData.append('stoppage', stoppageFile);
   if (filterpressFile) formData.append('filterpress', filterpressFile);
+  if (carbonFile) formData.append('carbon', carbonFile);
   if (year) formData.append('year', year);
   formData.append('token', STATE.token);
 
@@ -2535,7 +2555,7 @@ function leachHistoryResultHtml(data) {
     html += '</div>';
     return html;
   };
-  return section('Leaching', data.leaching) + section('Detox', data.detox) + section('Slurry', data.slurry) + section('Filter Press', data.filterpress) + section('Stoppage', data.stoppage);
+  return section('Leaching', data.leaching) + section('Detox', data.detox) + section('Slurry', data.slurry) + section('Filter Press', data.filterpress) + section('Carbon', data.carbon) + section('Stoppage', data.stoppage);
 }
 
 // ── Users ─────────────────────────────────────────────────────────────────────

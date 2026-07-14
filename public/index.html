@@ -291,6 +291,10 @@
               <input type="file" id="filterpress-hist-file" accept=".xlsx,.xls">
             </div>
             <div class="form-row">
+              <label>Carbon in Leaching Tank log (.xlsx)</label>
+              <input type="file" id="carbon-hist-file" accept=".xlsx,.xls">
+            </div>
+            <div class="form-row">
               <label>Year override (optional)</label>
               <input type="text" id="leach-hist-year" placeholder="e.g. 2025 — only needed if a sheet has no date at all and no dated sibling sheet">
             </div>
@@ -300,10 +304,11 @@
           <div id="leach-hist-result" style="margin-top:16px;max-width:640px"></div>
           <div style="margin-top:16px;font-size:12px;color:var(--muted);max-width:640px">
             One-time tool to backfill historical Leaching (LT4-LT10), Detox (DT1-DT4), Slurry Samples
-            (LT3-LT10, DT1-DT4 Au in Solids), Filter Press, and Stoppage Reason readings from the plant's Excel
-            logs. Upload any combination of the files. Safe to re-run for the tank sheets and Filter Press
-            (re-uploading rewrites the same readings). Note: only the stoppage log has no unique key, so
-            re-uploading it duplicates its rows — upload that one only once.
+            (LT3-LT10, DT1-DT4 Au in Solids), Filter Press, Carbon in Leaching Tank (LT4-LT10 weights + Au),
+            and Stoppage Reason readings from the plant's Excel logs. Upload any combination of the files.
+            Safe to re-run for the tank sheets, Filter Press, and Carbon (re-uploading rewrites the same
+            readings). Note: only the stoppage log has no unique key, so re-uploading it duplicates its rows —
+            upload that one only once.
           </div>
         </div>
 

@@ -13,7 +13,15 @@
       "Bash(node --check src/typedTables.js)",
       "Bash(node --check public/app.js)",
       "Bash(node \"C:\\\\Users\\\\ASHIRB~1\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\c--Users-Ashirbad-Pradhan-Desktop-coding-plant-geomysore-main\\\\b5cb152c-a683-4da8-80ba-0dc59db1096e\\\\scratchpad\\\\trend_harness.js\")",
-      "Bash(git ls-remote *)"
+      "Bash(git ls-remote *)",
+      "Bash(node --check src/carbonStore.js)",
+      "Bash(node --check src/config.js)",
+      "Bash(node --check src/db.js)",
+      "Bash(node --check db/migrate-carbon-history.js)",
+      "Bash(node db/migrate-carbon-history.js \"E:\\\\milling.xlsx\")",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); const db=require\\('./src/pool'\\); db.query\\('SELECT count\\(*\\) c FROM carbon_readings'\\).then\\(r=>{console.log\\(r.rows[0].c\\); process.exit\\(0\\);}\\)\")",
+      "Bash(node -e \"require\\('dotenv'\\).config\\(\\); const db=require\\('./src/pool'\\); db.query\\('SELECT count\\(*\\) c, count\\(distinct entry_date\\) d FROM carbon_readings'\\).then\\(r=>{console.log\\('rows:', r.rows[0].c, 'distinct dates:', r.rows[0].d\\); process.exit\\(0\\);}\\)\")",
+      "Bash(node --check src/routes.js)"
     ]
   }
 }
